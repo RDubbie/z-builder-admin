@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zerno Builder</title>
+  <!-- App Bridge: connects this page to Shopify admin (session, resource pickers, toasts, Direct API access) -->
+  <meta name="shopify-api-key" content="6f4b6d1576b4c07412a4e61adc86aaaa">
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="admin.css">
+  <link rel="stylesheet" href="preview/builder.css">
+</head>
+<body>
+  <div class="savebar" id="savebar" role="region" aria-label="Unsaved changes"><span>Unsaved changes</span><span style="display:flex;gap:8px"><button class="btn" id="sb-discard">Discard</button><button class="btn primary" id="sb-save">Save</button></span></div>
+  <div class="page" id="app"></div>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="preview/preview.js"></script>
+  <script src="preview/burr-guide.js"></script>
+  <script src="preview/builder.js"></script>
+  <script>if (/[?&]mock\b/.test(location.search)) document.write('<script src="dev/mock.js"><\/script>');</script>
+  <script src="admin.js"></script>
+</body>
+</html>
