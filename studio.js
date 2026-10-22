@@ -59,6 +59,14 @@
     for (let y = 0; y < h; y++) { const o = y * w * 4; for (let x = 0; x < w; x++) if (d[o + x * 4 + 3] > thr) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; y1 = y; } }
     return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
   }
+  /* the builder's frame for a set of colors: the union of the cut-outs, with room above for the funnel */
+  function cropOf(list) {
+    let X0 = Infinity, Y0 = Infinity, X1 = 0, Y1 = 0; const W = list[0].photo.width, H = list[0].photo.height;
+    list.forEach((F) => { const b = bbox(F.layers.mask); if (b) { X0 = Math.min(X0, b.x); Y0 = Math.min(Y0, b.y); X1 = Math.max(X1, b.x + b.w); Y1 = Math.max(Y1, b.y + b.h); } });
+    if (X1 <= 0) return { X0: 0, Y0: 0, BW: W, BH: H };
+    X0 = Math.max(0, Math.floor(X0 - W * 0.004)); Y0 = Math.max(0, Math.floor(Y0 - H * 0.02)); X1 = Math.min(W, Math.ceil(X1 + W * 0.004)); Y1 = Math.min(H, Math.ceil(Y1 + H * 0.004));
+    return { X0, Y0, BW: X1 - X0, BH: Y1 - Y0 };
+  }
   function combine(a, b, op) { const c = copyCanvas(a); if (!b) return c; const x = c.getContext('2d'); x.globalCompositeOperation = op; x.drawImage(b, 0, 0, c.width, c.height); return c; }
   function tint(mask, color) { const c = canvas(mask.width, mask.height), x = c.getContext('2d'); x.fillStyle = color; x.fillRect(0, 0, c.width, c.height); x.globalCompositeOperation = 'destination-in'; x.drawImage(mask, 0, 0); return c; }
   function masked(photo, mask) { const c = copyCanvas(photo); if (!mask) return c; const x = c.getContext('2d'); x.globalCompositeOperation = 'destination-in'; x.drawImage(mask, 0, 0, c.width, c.height); return c; }
@@ -113,6 +121,32 @@
   function ellPoint(E, u, v) { const w = 2 * E.rx, h = 2 * E.ry, c = Math.cos(E.a), s = Math.sin(E.a); return [E.cx + u * w * c - v * h * s, E.cy + u * w * s + v * h * c]; }
   function ellLocal(E, X, Y) { const dx = X - E.cx, dy = Y - E.cy, c = Math.cos(E.a), s = Math.sin(E.a); return [(dx * c + dy * s) / (2 * E.rx), (-dx * s + dy * c) / (2 * E.ry)]; }
 
+  /* ---------- how the front opens: grinder.geom.hinge, the same fields and timing as the builder ---------- */
+  function hingeFrom(geom, slug) {
+    const h = (geom && geom.hinge) || {}, mode = h.mode || 'swing', g0 = (geom && geom[slug]) || {};
+    return { mode, angle: h.angle != null ? +h.angle : -25, pivotPct: Array.isArray(h.pivot) ? h.pivot.map(Number) : null, pivotPx: null,
+      dist: h.dist != null ? +h.dist : mode === 'slide' && g0.open ? +g0.open : 10, dir: h.dir != null ? +h.dir : null, ms: h.ms ? +h.ms : 1800 };
+  }
+  // cubic-bezier(x1, y1, x2, y2) easing, solved for x
+  function bezier(x1, y1, x2, y2) {
+    const A = (a, b) => 1 - 3 * b + 3 * a, B = (a, b) => 3 * b - 6 * a, C = (a) => 3 * a;
+    const at = (t, a, b) => ((A(a, b) * t + B(a, b)) * t + C(a)) * t, slope = (t, a, b) => 3 * A(a, b) * t * t + 2 * B(a, b) * t + C(a);
+    return (x) => { let t = x; for (let i = 0; i < 8; i++) { const d = slope(t, x1, x2); if (!d) break; t -= (at(t, x1, x2) - x) / d; } return at(clamp(t, 0, 1), y1, y2); };
+  }
+  const SETTLE = bezier(0.5, 0, 0.3, 1);
+  const lerpPose = (a, b, t) => ({ rot: (a.rot || 0) + ((b.rot || 0) - (a.rot || 0)) * t, tx: (a.tx || 0) + ((b.tx || 0) - (a.tx || 0)) * t, ty: (a.ty || 0) + ((b.ty || 0) - (a.ty || 0)) * t });
+  /* the builder's front keyframes: hold to 14%, open by 34%, hold to 70%, overshoot by 86%, settle to 100% */
+  function poseAt(p, P1, P2) {
+    const P0 = { rot: 0, tx: 0, ty: 0 };
+    if (p <= 0.14) return P0;
+    if (p <= 0.34) return lerpPose(P0, P1, (p - 0.14) / 0.2);
+    if (p <= 0.7) return lerpPose(P1, P1, 0);
+    if (p <= 0.86) return lerpPose(P1, P2, (p - 0.7) / 0.16);
+    return lerpPose(P2, P0, SETTLE((p - 0.86) / 0.14));
+  }
+  // the chamber fades in while the front is open: 0 to 16%, in by 30%, out from 76% to 86%
+  function chamberAt(p) { return p < 0.16 ? 0 : p < 0.3 ? (p - 0.16) / 0.14 : p < 0.76 ? 1 : p < 0.86 ? 1 - (p - 0.76) / 0.1 : 0; }
+
   /* ---------- OpenCV.js, loaded on first use ---------- */
   let cvP = null;
   function loadCV() {
@@ -151,7 +185,7 @@
   /* Studio backdrops are smooth: flood in from the photo's edges over small color steps. What the flood reaches is
      probably background, which gives GrabCut a much better start than a plain rectangle. Returns null when the
      backdrop is too busy to trust. */
-  function backdropSeed(img, w, h) {
+  function backdropSeed(img, w, h, far = 70) {
     const c = canvas(w, h), x = ctxR(c); x.filter = 'blur(1px)'; x.drawImage(img, 0, 0, w, h); x.filter = 'none';
     const d = x.getImageData(0, 0, w, h).data, seen = new Uint8Array(w * h), q = new Int32Array(w * h);
     let head = 0, tail = 0, n = 0, sr = 0, sg = 0, sb = 0, cnt = 0;
@@ -161,7 +195,7 @@
     const push = (k) => { if (!seen[k]) { seen[k] = 1; q[tail++] = k; } };
     for (let i = 0; i < w; i++) { push(i); push((h - 1) * w + i); }
     for (let j = 0; j < h; j++) { push(j * w); push(j * w + w - 1); }
-    const step = 5, far = 70;
+    const step = 5;
     while (head < tail) {
       const k = q[head++], xk = k % w, r = d[k * 4], g = d[k * 4 + 1], b = d[k * 4 + 2];
       if (Math.abs(r - mr) + Math.abs(g - mg) + Math.abs(b - mb) > far * 3) { seen[k] = 2; continue; }   // too far from the backdrop color
@@ -207,7 +241,7 @@
     const W = img.width, H = img.height, R = o.rect || { x: W * 0.01, y: H * 0.01, w: W * 0.98, h: H * 0.98 };
     const s1 = Math.min(1, WORK / Math.max(W, H)), w1 = Math.round(W * s1), h1 = Math.round(H * s1);
     const src1 = matRGB(cv, img, w1, h1), m1 = new cv.Mat(h1, w1, cv.CV_8UC1, new cv.Scalar(0));
-    const pa = o.prior ? readRGBA(o.prior, w1, h1) : null, bd = !pa && !o.rect ? backdropSeed(img, w1, h1) : null;
+    const pa = o.prior ? readRGBA(o.prior, w1, h1) : null, bd = !pa && !o.rect ? backdropSeed(img, w1, h1, o.seedFar) : null;
     for (let i = 0; i < w1 * h1; i++) m1.data[i] = pa ? (pa[i * 4 + 3] >= 128 ? 3 : 2) : bd ? (bd[i] === 1 ? 2 : 3) : 3;
     applyHard(m1.data, w1, h1, s1, { ...o, R });
     try { ensureBoth(m1.data, w1, h1); grab(cv, src1, m1, 5); } catch (e) { src1.delete(); m1.delete(); throw e; }
@@ -249,6 +283,12 @@
     }
     if (!rings.length) throw new Error('The cut-out came back empty. Mark more of the part with the Keep brush.');
     return rings;
+  }
+  /* product photos: a tighter backdrop seed. Gray or dark items on a dark backdrop keep their parts, where the
+     grinder flow's looser seed would let the backdrop color flow into them. */
+  async function autoCutBest(img, o = {}) {
+    if (o.hints || o.prior || o.rect) return autoCut(img, o);
+    try { return await autoCut(img, { ...o, seedFar: 25 }); } catch (e) { return autoCut(img, o); }
   }
   async function vectorize(raster, eps) { const { cv } = await loadCV(); const b = binOf(cv, raster); const r = ringsOf(cv, b, { eps, keep: 0.01 }); b.delete(); return r; }
   function ringPath(p, pts, smooth) {
@@ -353,9 +393,7 @@
       if (!this.fins.length) this.fins = [{ slug: 'default', name: 'Default', image: null }];
       this.F = {}; this.fins.forEach((f) => { this.F[f.slug] = this.blank(f); });
       this.cur = this.fins[0].slug; this.step = 0; this.tool = null; this.mode = 'add';
-      const geom = this.g.geom || {};
-      this.hinge = (geom.hinge && geom.hinge.mode) || 'swing';
-      this.open = (geom[this.cur] && geom[this.cur].open) || 12;
+      this.H = hingeFrom(this.g.geom || {}, this.cur);
       this.view = { s: 1, x: 0, y: 0 }; this.brush = 26; this.feather = 0.6; this.detail = 1.2; this.contrast = 0.45; this.side = 0.55; this.meshN = 3;
       this.showBg = true; this.previewOpen = false; this.previewNoCap = false;
       this.undoStack = []; this.texCache = new Map(); this.drag = null; this.poly = null; this.keys = {};
@@ -363,7 +401,9 @@
       this.prevAcc = this.accents[0] ? String(this.accents[0].id) : ''; this.prevCap = this.caps[0] ? String(this.caps[0].id) : '';
       this.mount(); this.loadExisting();
     }
-    blank(f) { return { ...f, photo: null, layers: { mask: null, front: null, knob: null, cap: null }, vec: {}, hints: {}, knobEll: null, faceEll: null, band: null, knobMesh: null, capMesh: null, uncapped: null, uncappedMask: null, steel: null, capMetalImg: null, ver: 0 }; }
+    get hinge() { return this.H.mode; }
+    set hinge(v) { this.H.mode = v; }
+    blank(f) { return { ...f, fromArt: false, photo: null, layers: { mask: null, front: null, knob: null, cap: null }, vec: {}, hints: {}, knobEll: null, faceEll: null, band: null, knobMesh: null, capMesh: null, uncapped: null, uncappedMask: null, steel: null, capMetalImg: null, ver: 0 }; }
     get f() { return this.F[this.cur]; }
     get layerKey() { return { mask: 'mask', front: 'front', knob: 'knob', cap: 'cap' }[STEPS[this.step].k] || null; }
     changed(F = this.f) { F.ver++; F._cache = null; this.dirty = true; this.draw(); this.refreshSteps(); }   // the catalog changes only on Save art
@@ -385,7 +425,7 @@
       this.bindPointer(); this.bindKeys();
       this.renderFins(); this.renderAll();
     }
-    destroy() { this.ro.disconnect(); document.removeEventListener('keydown', this._kd); document.removeEventListener('keyup', this._ku); this.host.innerHTML = ''; }
+    destroy() { cancelAnimationFrame(this._play); this.ro.disconnect(); document.removeEventListener('keydown', this._kd); document.removeEventListener('keyup', this._ku); this.host.innerHTML = ''; }
     renderAll() { this.refreshSteps(); this.renderTools(); this.renderSide(); this.renderLayers(); this.draw(); }
     renderFins() {
       this.q('fins').innerHTML = this.fins.length > 1 || this.fins[0].slug !== 'default' ? this.fins.map((f) => `<button type="button" data-f="${esc(f.slug)}" aria-pressed="${f.slug === this.cur}"><i style="background:${esc(f.swatch || (/white|cream|silver/.test(f.slug) ? '#e9e9e6' : /black/.test(f.slug) ? '#141517' : '#999'))}"></i>${esc(f.name)}</button>`).join('') : '';
@@ -410,7 +450,7 @@
       this.q('lays').innerHTML = `<h4>Layers for ${esc(F.name)}</h4>${row('mask', 'Grinder', !!F.layers.mask)}${row('front', 'Front assembly', !!F.layers.front)}${row('knob', 'Accent piece', !!F.knobEll)}${row('cap', 'Funnel cap', !!F.layers.cap)}${row('face', 'Burr chamber', !!F.faceEll)}`;
     }
     go(i) { this.step = clamp(i, 0, STEPS.length - 1); this.poly = null; this.tool = this.defaultTool(); this.renderAll(); }
-    defaultTool() { return { photo: 'pan', mask: 'keep', front: 'lasso', knob: 'ellipse', cap: 'rect', face: 'ellipse', save: 'pan' }[STEPS[this.step].k]; }
+    defaultTool() { return { photo: 'pan', mask: 'keep', front: this.f.layers.front && this.hinge !== 'none' ? 'hinge' : 'lasso', knob: 'ellipse', cap: 'rect', face: 'ellipse', save: 'pan' }[STEPS[this.step].k]; }
 
     /* ---------- toolbar ---------- */
     renderTools() {
@@ -419,7 +459,7 @@
       const sets = {
         photo: [T('pan', 'Move view')],
         mask: [T('keep', 'Keep', '#00c853', 'Paint over parts to keep. The cut-out updates when you let go.'), T('remove', 'Remove', '#ff1744', 'Paint over background to remove. The cut-out updates when you let go.'), '<span class="sep"></span>', T('paint', 'Paint'), T('erase', 'Erase'), T('lasso', 'Lasso'), T('poly', 'Polygon'), T('points', 'Edit points'), '<span class="sep"></span>', T('pan', 'Move view')],
-        front: [T('rect', 'Box select', '', 'Draw a box around the part. The app finds it inside the box.'), T('keep', 'Keep', '#00c853'), T('remove', 'Remove', '#ff1744'), '<span class="sep"></span>', T('lasso', 'Lasso'), T('poly', 'Polygon'), T('paint', 'Paint'), T('erase', 'Erase'), T('points', 'Edit points'), '<span class="sep"></span>', T('pan', 'Move view')],
+        front: [T('hinge', 'Hinge', '#e8a33a', 'Drag the hinge point or the slide arrow. Click to place it.'), '<span class="sep"></span>', T('rect', 'Box select', '', 'Draw a box around the part. The app finds it inside the box.'), T('keep', 'Keep', '#00c853'), T('remove', 'Remove', '#ff1744'), '<span class="sep"></span>', T('lasso', 'Lasso'), T('poly', 'Polygon'), T('paint', 'Paint'), T('erase', 'Erase'), T('points', 'Edit points'), '<span class="sep"></span>', T('pan', 'Move view')],
         knob: [T('ellipse', 'Ellipse'), T('rect', 'Find in box', '', 'Draw a box around the accent piece. The app fits the ellipse.'), T('mesh', 'Mold'), '<span class="sep"></span>', T('paint', 'Add edge', '', 'Paint the visible side of the piece'), T('erase', 'Erase edge'), '<span class="sep"></span>', T('pan', 'Move view')],
         cap: [T('rect', 'Box select'), T('keep', 'Keep', '#00c853'), T('remove', 'Remove', '#ff1744'), '<span class="sep"></span>', T('lasso', 'Lasso'), T('poly', 'Polygon'), T('paint', 'Paint'), T('erase', 'Erase'), T('points', 'Edit points'), T('mesh', 'Mold'), '<span class="sep"></span>', T('pan', 'Move view')],
         face: [T('ellipse', 'Ellipse'), '<span class="sep"></span>', T('pan', 'Move view')],
@@ -454,7 +494,8 @@
       if (k === 'photo') {
         h = `<h3>1. Photo for ${esc(F.name)}</h3><p>Use a sharp, evenly lit photo of the grinder on a plain background. Every color must use the same framing, so the shapes line up.</p>
           <div class="zs-drop" data-act="upload">${F.photo ? `<img src="${F.photo.toDataURL('image/jpeg', 0.6)}" alt="">` : ''}<b>${F.photo ? 'Replace the photo' : 'Upload a photo'}</b><span>Drop a JPG or PNG here, or click to choose</span></div>
-          ${F.image ? `<button type="button" class="zs-btn full" data-act="shopify">Use the ${esc(F.name)} photo from Shopify</button>` : ''}
+          ${F.image ? `<button type="button" class="zs-btn full" data-act="shopify">Use the ${esc(F.name)} product photo</button>` : ''}
+          ${this.o.pickFile ? '<button type="button" class="zs-btn full" data-act="files">Choose from Shopify Files</button>' : ''}
           ${F.photo ? `<p class="zs-ok">${F.photo.width} x ${F.photo.height} px. Next, cut out the grinder.</p>` : ''}`;
       } else if (k === 'mask') {
         h = `<h3>2. Cut out the grinder</h3><p>The app finds the grinder and removes the background. Then fix any spot with the Keep and Remove brushes: paint over it and let go.</p>
@@ -462,9 +503,8 @@
           <label class="zs-check"><input type="checkbox" data-in="showBg" ${this.showBg ? 'checked' : ''}><span>Show the removed background faintly</span></label>
           ${edges('mask')}`;
       } else if (k === 'front') {
-        h = `<h3>3. Front assembly</h3><p>Mark the part that opens to show the burrs: the dial, the accent piece and everything that moves with them.</p>
-          <div class="zs-k">How it opens</div><div class="zs-seg">${[['swing', 'Swings open'], ['slide', 'Slides out'], ['none', 'Does not open']].map(([v, n]) => `<button type="button" data-hinge="${v}" aria-pressed="${this.hinge === v}">${n}</button>`).join('')}</div>
-          ${this.hinge === 'slide' ? `<label class="zs-field"><span>How far it slides: ${this.open}%</span><input type="range" min="3" max="40" step="0.5" value="${this.open}" data-in="open"></label>` : ''}
+        h = `<h3>3. Front assembly</h3><p>Mark the part that opens to show the burrs: the dial, the accent piece and everything that moves with them. Then set how it opens.</p>
+          ${this.openingPanel()}
           ${this.hinge === 'none' ? '<p class="zs-tip">The burr falls into the accent piece instead. Skip to step 4.</p>' : `<p class="zs-tip">Tip: draw a box around the front, or trace it with the Lasso. Hold Shift with the Lasso to remove.</p>${edges('front')}`}`;
       } else if (k === 'knob') {
         const E = F.knobEll;
@@ -482,26 +522,41 @@
           ${F.layers.cap ? `<div class="zs-k">Cap edge from the product photo</div><div class="zs-band" data-r="band"><canvas data-r="bandCv" width="240" height="240"></canvas><div class="r" data-r="bandR"><i></i></div></div>
           <div class="zs-row"><button type="button" class="zs-btn" data-act="mesh">${this.tool === 'mesh' ? 'Done molding' : 'Mold the cap'}</button><button type="button" class="zs-btn" data-act="bandReset">Reset strip</button><button type="button" class="zs-btn" data-act="meshReset" ${F.capMesh ? '' : 'disabled'}>Reset mold</button></div>` : ''}
           <div class="zs-k">Optional photos, same framing</div>
-          <button type="button" class="zs-btn full" data-act="uncapped">${F.uncapped ? 'Replace' : 'Add'} a photo without the cap</button><p style="font-size:12px">Shows the real open funnel for "No cap". Without it the app draws one.</p>
-          <button type="button" class="zs-btn full" data-act="steel">${F.steel ? 'Replace' : 'Add'} a photo with the steel cap</button>
+          <div class="zs-row"><button type="button" class="zs-btn" data-act="uncapped">${F.uncapped ? 'Replace' : 'Add'} a photo without the cap</button>${this.o.pickFile ? '<button type="button" class="zs-btn" data-act="uncappedFiles">From Files</button>' : ''}</div><p style="font-size:12px">Shows the real open funnel for "No cap". Without it the app draws one.</p>
+          <div class="zs-row"><button type="button" class="zs-btn" data-act="steel">${F.steel ? 'Replace' : 'Add'} a photo with the steel cap</button>${this.o.pickFile ? '<button type="button" class="zs-btn" data-act="steelFiles">From Files</button>' : ''}</div>
           ${F.layers.cap ? edges('cap') : ''}`;
       } else if (k === 'face') {
         h = this.hinge === 'none' ? '<h3>6. Burr chamber</h3><p class="zs-tip">This grinder does not open, so it needs no burr chamber. Go to Preview and save.</p>'
           : `<h3>6. Burr chamber</h3><p>Draw the ellipse where the burr chamber shows when the front ${this.hinge === 'slide' ? 'slides out' : 'swings open'}. It is usually the round face where the front meets the body.</p>
-          <label class="zs-check"><input type="checkbox" data-in="previewOpen" ${this.previewOpen ? 'checked' : ''}><span>Show it open</span></label>`;
+          <label class="zs-check"><input type="checkbox" data-in="previewOpen" ${this.previewOpen ? 'checked' : ''}><span>Show it open</span></label>
+          <button type="button" class="zs-btn full" data-act="play" ${F.layers.front ? '' : 'disabled'}>Play the opening</button>`;
       } else if (k === 'save') {
         const ready = this.fins.map((f) => { const G = this.F[f.slug]; const miss = STEPS.slice(0, 6).filter((s, i) => !this.stepDone(i, G)).map((s) => s.n); return { f, G, miss }; });
         h = `<h3>7. Preview and save</h3><p>Check each color, then save. The app uploads the files to Shopify and the builder uses them after you save the catalog.</p>
           <div class="zs-list">${ready.map(({ f, miss }) => `<div class="it"><b>${esc(f.name)}</b>${miss.length ? `<span>Missing: ${esc(miss.join(', '))}</span>` : '<span class="y">Ready</span>'}</div>`).join('')}</div>
           ${this.previewSelect('acc')}${this.previewSelect('cap')}
           <label class="zs-check"><input type="checkbox" data-in="previewNoCap" ${this.previewNoCap ? 'checked' : ''}><span>Show "No cap"</span></label>
-          ${this.hinge !== 'none' ? `<label class="zs-check"><input type="checkbox" data-in="previewOpen" ${this.previewOpen ? 'checked' : ''}><span>Show it open</span></label>` : ''}
+          ${this.hinge !== 'none' ? `<label class="zs-check"><input type="checkbox" data-in="previewOpen" ${this.previewOpen ? 'checked' : ''}><span>Show it open</span></label><button type="button" class="zs-btn full" data-act="play" ${F.layers.front ? '' : 'disabled'}>Play the opening</button>` : ''}
           <button type="button" class="zs-btn primary full" data-act="export" ${ready.some((r) => r.G.photo && r.G.layers.mask) ? '' : 'disabled'}>Save art</button>
           <div class="zs-prog" data-r="prog" hidden><i></i></div><p data-r="saveMsg"></p>
           ${ready.some((r) => r.miss.length && r.G.photo) ? '<p class="zs-warn">Colors with missing steps save what they have. A color without a cut-out shows its plain photo in the builder.</p>' : ''}`;
       }
       side.innerHTML = needPhoto + h + copyBtn + next;
       this.bindSide(); if (k === 'cap' && F.layers.cap) this.drawBand();
+    }
+    openingPanel() {
+      const H = this.H, F = this.f, on = H.mode !== 'none', saved = !!(this.g.geom && this.g.art);
+      const dirNow = H.dir != null ? H.dir : Math.round(deg(Math.atan2(0.06, -1)));
+      return `<div class="zs-k">How it opens</div><div class="zs-seg">${[['swing', 'Swings open'], ['slide', 'Slides out'], ['none', 'Does not open']].map(([v, n]) => `<button type="button" data-hinge="${v}" aria-pressed="${H.mode === v}">${n}</button>`).join('')}</div>
+        ${H.mode === 'swing' ? `<label class="zs-field"><span data-lab="hAngle">Opening angle: ${r2(H.angle)}&deg;</span><input type="range" min="-60" max="60" step="0.5" value="${H.angle}" data-in="hAngle"><small>Negative tips the top forward. Positive tips it back.</small></label>
+          <p class="zs-tip">Drag the orange crosshair on the photo to move the hinge point, or click with the Hinge tool to place it.</p>
+          <button type="button" class="zs-btn" data-act="pivotReset" ${H.pivotPx || H.pivotPct ? '' : 'disabled'}>Hinge at the bottom of the burr chamber</button>` : ''}
+        ${H.mode === 'slide' ? `<label class="zs-field"><span data-lab="hDist">How far it slides: ${r2(H.dist)}%</span><input type="range" min="1" max="45" step="0.5" value="${H.dist}" data-in="hDist"></label>
+          <label class="zs-field"><span data-lab="hDir">Direction: ${Math.round(dirNow)}&deg;</span><input type="range" min="0" max="360" step="1" value="${dirNow}" data-in="hDir"><small>0 is right, 90 is down, 180 is left. Or drag the arrow tip on the photo.</small></label>
+          <button type="button" class="zs-btn" data-act="dirReset" ${H.dir != null ? '' : 'disabled'}>Slide along the grinder (default)</button>` : ''}
+        ${on ? `<label class="zs-field"><span data-lab="hMs">Speed: ${(H.ms / 1000).toFixed(1)} s</span><input type="range" min="0.6" max="4" step="0.1" value="${H.ms / 1000}" data-in="hMs"><small>The whole move: open, drop the burr, close.</small></label>` : ''}
+        <div class="zs-row">${on ? `<button type="button" class="zs-btn" data-act="play" ${F.layers.front ? '' : 'disabled'}>Play</button>` : ''}${saved ? '<button type="button" class="zs-btn primary" data-act="saveOpening">Save opening</button>' : ''}</div>
+        ${saved ? '<p style="font-size:12px">Save opening keeps the current art and changes only how it opens.</p>' : '<p style="font-size:12px">Save art in step 7 saves the opening too.</p>'}<p data-r="openMsg"></p>`;
     }
     previewSelect(kind) {
       const list = kind === 'acc' ? this.accents : this.caps, cur = kind === 'acc' ? this.prevAcc : this.prevCap;
@@ -513,6 +568,9 @@
       act('next', () => this.go(this.step + 1));
       act('upload', async () => { const file = await pickFile(); if (file) this.setPhoto(URL.createObjectURL(file)); });
       act('shopify', () => this.setPhoto(F.image));
+      act('files', async () => { const u = await this.o.pickFile({ title: `Photo for ${F.name}` }); if (u) this.setPhoto(u); });
+      act('uncappedFiles', async () => { const u = await this.o.pickFile({ title: 'Photo without the cap' }); if (u) this.setExtraPhoto('uncapped', u); });
+      act('steelFiles', async () => { const u = await this.o.pickFile({ title: 'Photo with the steel cap' }); if (u) this.setExtraPhoto('steel', u); });
       const drop = $('.zs-drop', side);
       if (drop) {
         drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); }; drop.ondragleave = () => drop.classList.remove('over');
@@ -528,7 +586,11 @@
       act('uncapped', async () => { const file = await pickFile(); if (file) this.setExtraPhoto('uncapped', URL.createObjectURL(file)); });
       act('steel', async () => { const file = await pickFile(); if (file) this.setExtraPhoto('steel', URL.createObjectURL(file)); });
       act('export', () => this.exportArt());
-      $$('[data-hinge]', side).forEach((b) => { b.onclick = () => { this.hinge = b.dataset.hinge; this.dirty = true; this.renderSide(); this.refreshSteps(); this.draw(); }; });
+      act('play', () => this.play());
+      act('saveOpening', () => this.saveOpening());
+      act('pivotReset', () => { this.H.pivotPx = null; this.H.pivotPct = null; this.dirty = true; this.renderSide(); this.draw(); });
+      act('dirReset', () => { this.H.dir = null; this.dirty = true; this.renderSide(); this.draw(); });
+      $$('[data-hinge]', side).forEach((b) => { b.onclick = () => { this.hinge = b.dataset.hinge; this.dirty = true; if (STEPS[this.step].k === 'front') this.tool = this.defaultTool(); this.renderTools(); this.renderSide(); this.refreshSteps(); this.draw(); }; });
       $$('[data-prev]', side).forEach((s) => { s.onchange = () => { if (s.dataset.prev === 'acc') this.prevAcc = s.value; else this.prevCap = s.value; this.draw(); if (STEPS[this.step].k === 'cap') this.drawBand(); }; });
       $$('[data-in]', side).forEach((el) => {
         const k = el.dataset.in;
@@ -538,7 +600,11 @@
           if (k === 'feather') { this.feather = v; const lk = this.layerKey; if (F.vec[lk]) this.fromVec(lk); return; }
           if (k === 'detail') { this.detail = v; clearTimeout(this._dt); this._dt = setTimeout(() => { if (F.vec[this.layerKey]) this.makeCrisp(true); }, 250); return; }
           if (k === 'meshN') { this.meshN = v; this.pushUndo(); if (STEPS[this.step].k === 'knob') F.knobMesh = null; else F.capMesh = null; this.ensureMesh(); this.changed(); return; }
-          if (k === 'open') { this.open = v; const l = el.previousElementSibling; if (l) l.textContent = `How far it slides: ${v}%`; this.dirty = true; this.draw(); return; }
+          const lab = (t) => { const l = $(`[data-lab="${k}"]`, side); if (l) l.innerHTML = t; this.dirty = true; this.draw(); };
+          if (k === 'hAngle') { this.H.angle = v; return lab(`Opening angle: ${r2(v)}&deg;`); }
+          if (k === 'hDist') { this.H.dist = v; return lab(`How far it slides: ${r2(v)}%`); }
+          if (k === 'hDir') { this.H.dir = v; const b = $('[data-act="dirReset"]', side); if (b) b.disabled = false; return lab(`Direction: ${Math.round(v)}&deg;`); }
+          if (k === 'hMs') { this.H.ms = Math.round(v * 1000); return lab(`Speed: ${v.toFixed(1)} s`); }
           this[k] = v; if (k === 'contrast' || k === 'side') F._cache = null; this.draw();
         };
       });
@@ -556,7 +622,7 @@
           if (Math.abs(ar - 1) > 0.02) this.toast(`This photo has a different shape than the other colors. The app resized it to ${W} x ${H}. Shapes may not line up.`);
         }
         this.pushUndo();
-        F.photo = imageCanvas(img, W, H);
+        F.photo = imageCanvas(img, W, H); F.fromArt = false;
         if (F.layers.mask && (F.layers.mask.width !== F.photo.width || F.layers.mask.height !== F.photo.height)) Object.assign(F, this.blank(F), { photo: F.photo });
         this.changed(F); this.renderSide(); this.renderLayers(); this.fit();
       } catch (e) { this.toast(e.message); } finally { this.busy(false); }
@@ -589,7 +655,7 @@
           const u = urls[s], G = geom[s], F = this.F[s];
           const [photo, mask, front, kd, cd, cm] = await Promise.all([img(u.photo), img(u.mask), img(u.front), img(u.knobD), img(u.capD), img(u.capMetal)]);
           if (!photo) continue;
-          F.photo = imageCanvas(photo, photo.naturalWidth, photo.naturalHeight);
+          F.photo = imageCanvas(photo, photo.naturalWidth, photo.naturalHeight); F.fromArt = true;   // the saved photo is the builder's frame
           const W = F.photo.width, H = F.photo.height, at = (p) => [p[0] / 100 * W, p[1] / 100 * H, p[2] / 100 * W, p[3] / 100 * H];
           const lay = (im, p) => { if (!im) return null; const c = canvas(W, H), x = c.getContext('2d'); if (p) x.drawImage(im, ...at(p)); else x.drawImage(im, 0, 0, W, H); return c; };
           F.layers.mask = lay(mask) || null; F.layers.front = lay(front);
@@ -604,7 +670,7 @@
           if (G.cap && G.cap.mesh) F.capMesh = { n: G.cap.mesh.n, pts: G.cap.mesh.pts.map((p) => p.slice()) };
           if (G.face) F.faceEll = { cx: G.face.c[0] / 100 * W, cy: G.face.c[1] / 100 * H, rx: G.face.w / 100 * W, ry: G.face.h / 100 * H, a: rad(G.face.rot || 0) };
           if (cm) F.capMetalImg = cm;
-          if (G.open) this.open = G.open;
+          if (G.open && this.H.mode === 'slide' && !(g.geom.hinge && g.geom.hinge.dist != null)) this.H.dist = +G.open;
         }
         this.dirty = false; this.renderAll(); this.fit();
       } catch (e) { this.toast('The current art could not load: ' + e.message); } finally { this.busy(false); }
@@ -746,27 +812,101 @@
       const hint = {}; Object.entries(F.hints).forEach(([k, v]) => { if (v) hint[k] = v; });
       F._cut = { ver: F.ver, cut, t, hint }; return F._cut;
     }
+    /* the still parts (body, plus the cap on the Z1 kind) and the moving part (front, accent piece, plus the cap on the Z2 kind) */
+    parts(F, sh, { noCap = false } = {}) {
+      const W = F.photo.width, H = F.photo.height, still = canvas(W, H), move = canvas(W, H), xs = still.getContext('2d'), xm = move.getContext('2d');
+      let body = F.layers.mask; if (F.layers.front && this.hinge !== 'none') body = combine(body, F.layers.front, 'destination-out'); if (F.layers.cap) body = combine(body, F.layers.cap, 'destination-out');
+      const front = F.layers.front && this.hinge !== 'none' ? masked(F.photo, combine(F.layers.front, F.layers.mask, 'destination-in')) : null;
+      xs.drawImage(masked(F.photo, body), 0, 0);
+      const drawCap = (x) => { if (noCap) { if (sh && sh.cap) { const [ox, oy, ow, oh] = sh.cap.nonePos; x.drawImage(F.uncapped && F.uncappedMask ? this.uncappedPatch(F, sh.cap) : sh.cap.none, ox, oy, ow, oh); } } else { const cc = this.capCanvas(F, sh); if (cc) x.drawImage(cc.c, cc.cl, cc.ct); else if (F.layers.cap) x.drawImage(masked(F.photo, F.layers.cap), 0, 0); } };
+      if (this.hinge === 'slide') drawCap(xs);
+      if (front) xm.drawImage(front, 0, 0);
+      const kc = this.knobCanvas(F, sh); if (kc) xm.drawImage(kc.c, kc.x0, kc.y0);
+      if (this.hinge !== 'slide') drawCap(xm);
+      return { still, move, front: !!front };
+    }
+    drawParts(x, F, P, pose, chamber) {
+      const E = F.faceEll;
+      if (chamber > 0 && E && P.front) { x.save(); x.globalAlpha = chamber; x.fillStyle = '#0d0d0f'; x.beginPath(); x.ellipse(E.cx, E.cy, E.rx, E.ry, E.a, 0, Math.PI * 2); x.fill(); x.restore(); }
+      x.drawImage(P.still, 0, 0);
+      x.save(); if (pose && P.front) this.applyPose(x, pose, F); x.drawImage(P.move, 0, 0); x.restore();
+    }
     composite(F, sh, { open = false, noCap = false } = {}) {
       const W = F.photo.width, H = F.photo.height, c = canvas(W, H), x = c.getContext('2d');
       if (!F.layers.mask) { x.drawImage(F.photo, 0, 0); return c; }
-      let body = F.layers.mask; if (F.layers.front && this.hinge !== 'none') body = combine(body, F.layers.front, 'destination-out'); if (F.layers.cap) body = combine(body, F.layers.cap, 'destination-out');
-      const front = F.layers.front && this.hinge !== 'none' ? masked(F.photo, combine(F.layers.front, F.layers.mask, 'destination-in')) : null;
-      const E = F.faceEll;
-      if (open && E && front) { x.save(); x.fillStyle = '#0d0d0f'; x.beginPath(); x.ellipse(E.cx, E.cy, E.rx, E.ry, E.a, 0, Math.PI * 2); x.fill(); x.restore(); }
-      x.drawImage(masked(F.photo, body), 0, 0);
-      const capHost = this.hinge === 'slide' ? 'frame' : 'front';
-      const drawCap = () => { if (noCap) { if (sh && sh.cap) { const [ox, oy, ow, oh] = sh.cap.nonePos; x.drawImage(F.uncapped && F.uncappedMask ? this.uncappedPatch(F, sh.cap) : sh.cap.none, ox, oy, ow, oh); } } else { const cc = this.capCanvas(F, sh); if (cc) x.drawImage(cc.c, cc.cl, cc.ct); else if (F.layers.cap) x.drawImage(masked(F.photo, F.layers.cap), 0, 0); } };
-      if (capHost === 'frame') drawCap();
-      x.save();
-      if (open && E && front) {
-        if (this.hinge === 'slide') x.translate(-this.open / 100 * W, this.open * 0.06 / 100 * H);
-        else { x.translate(E.cx, E.cy + E.ry); x.rotate(rad(-25)); x.translate(-E.cx, -(E.cy + E.ry)); }
-      }
-      if (front) x.drawImage(front, 0, 0);
-      const kc = this.knobCanvas(F, sh); if (kc) x.drawImage(kc.c, kc.x0, kc.y0);
-      if (capHost === 'front') drawCap();
-      x.restore();
+      const P = this.parts(F, sh, { noCap });
+      this.drawParts(x, F, P, open && F.faceEll ? this.openPose(F) : null, open ? 1 : 0);
       return c;
+    }
+
+    /* ---------- opening: frame, hinge point, poses (in photo pixels) ---------- */
+    // the builder's frame: the saved photo for loaded art, else the crop Save art makes (the union of the cut-outs)
+    frameBox(F = this.f) {
+      const W = F.photo.width, H = F.photo.height;
+      if (F.fromArt) return { X0: 0, Y0: 0, BW: W, BH: H };
+      const list = this.fins.map((f) => this.F[f.slug]).filter((G) => G.photo && G.layers.mask);
+      if (!list.length) return { X0: 0, Y0: 0, BW: W, BH: H };
+      const key = list.map((G) => G.slug + ':' + G.ver).join();
+      if (this._fb && this._fb.key === key) return this._fb.b;
+      const b = cropOf(list); this._fb = { key, b }; return b;
+    }
+    frontBox(F) { if (!F.layers.front) return null; if (!F._fbx || F._fbx.ver !== F.ver) F._fbx = { ver: F.ver, b: bbox(F.layers.front) }; return F._fbx.b; }
+    defaultPivot(F) {
+      const E = F.faceEll; if (E) return this.hinge === 'slide' ? [E.cx, E.cy] : [E.cx, E.cy + E.ry];
+      const b = this.frontBox(F); return b ? [b.x + b.w / 2, this.hinge === 'slide' ? b.y + b.h / 2 : b.y + b.h] : [F.photo.width / 2, F.photo.height / 2];
+    }
+    pivotPx(F = this.f) {
+      const H = this.H;
+      if (H.pivotPx) return H.pivotPx;
+      if (H.pivotPct && F.photo) { const b = this.frameBox(F); H.pivotPx = [b.X0 + H.pivotPct[0] / 100 * b.BW, b.Y0 + H.pivotPct[1] / 100 * b.BH]; return H.pivotPx; }
+      return this.defaultPivot(F);
+    }
+    slideVec(F) {
+      const H = this.H, b = this.frameBox(F), out = H.dist;
+      const dx = H.dir == null ? -out : out * Math.cos(rad(H.dir)), dy = H.dir == null ? out * 0.06 : out * Math.sin(rad(H.dir));
+      return { dx, dy, px: dx / 100 * b.BW, py: dy / 100 * b.BH };
+    }
+    openPose(F) { if (this.hinge === 'slide') { const v = this.slideVec(F); return { tx: v.px, ty: v.py }; } return { rot: this.H.angle }; }
+    overPose(F) { if (this.hinge === 'slide') { const v = this.slideVec(F); return { tx: -v.px * 0.03, ty: 0 }; } return { rot: -this.H.angle * 0.032 }; }
+    applyPose(x, pose, F) {
+      if (this.hinge === 'slide') { x.translate(pose.tx || 0, pose.ty || 0); return; }
+      const [px, py] = this.pivotPx(F); x.translate(px, py); x.rotate(rad(pose.rot || 0)); x.translate(-px, -py);
+    }
+    slideOrigin(F) { const E = F.faceEll; if (E) return [E.cx, E.cy]; const b = this.frontBox(F); return b ? [b.x + b.w / 2, b.y + b.h / 2] : this.pivotPx(F); }
+    play() {
+      const F = this.f;
+      if (!F.photo || !F.layers.mask || !F.layers.front || this.hinge === 'none') { this.toast('Mark the front assembly first (step 3).'); return; }
+      cancelAnimationFrame(this._play);
+      const P = this.parts(F, this.shading(F)), P1 = this.openPose(F), P2 = this.overPose(F), D = this.H.ms, t0 = performance.now();
+      this.playLog = [];
+      const tick = (now) => {
+        const p = Math.min(1, (now - t0) / D), pose = poseAt(p, P1, P2);
+        this.playing = { P, pose, chamber: chamberAt(p) }; this.playLog.push({ p, ...pose }); this.paint();
+        if (p < 1) this._play = requestAnimationFrame(tick); else { this.playing = null; this.draw(); }
+      };
+      this._play = requestAnimationFrame(tick);
+    }
+    hingeOut(b, F) {
+      const H = this.H, o = { mode: H.mode };
+      if (H.mode === 'swing') o.angle = r2(H.angle);
+      if (H.mode === 'slide') { o.dist = r2(H.dist); if (H.dir != null) o.dir = r2(((H.dir % 360) + 360) % 360); }
+      if (H.mode !== 'none') {
+        if (H.pivotPx && b && F && F.photo) o.pivot = [r3((H.pivotPx[0] - b.X0) / b.BW * 100), r3((H.pivotPx[1] - b.Y0) / b.BH * 100)];
+        else if (H.pivotPct) o.pivot = H.pivotPct.map(r3);
+        o.ms = Math.round(H.ms);
+      }
+      return o;
+    }
+    /* change only how it opens, on the art that is already saved (the built-in Z1 and Z2 art too) */
+    saveOpening() {
+      const g = this.g, msg = this.q('openMsg');
+      if (!g.geom || !g.art) { if (msg) { msg.className = 'zs-warn'; msg.textContent = 'Save art first. It saves the opening too.'; } return; }
+      const F = this.fins.map((f) => this.F[f.slug]).find((G) => G.fromArt && G.photo) || this.f;
+      g.geom.hinge = this.hingeOut(F.photo ? this.frameBox(F) : null, F);
+      if (this.hinge === 'slide') Object.values(g.geom).forEach((G) => { if (G && typeof G === 'object' && G.face) G.open = r2(this.H.dist); });
+      if (this.o.onChange) this.o.onChange();
+      this.openingSaved = JSON.parse(JSON.stringify(g.geom.hinge));
+      if (msg) { msg.className = 'zs-ok'; msg.textContent = 'Opening saved. The art stays as it is.'; }
     }
     uncappedPatch(F, cap) {
       const [ox, oy, ow, oh] = cap.nonePos, pad = Math.round(cap.h * 0.6);
@@ -791,13 +931,17 @@
       x.imageSmoothingQuality = 'high';
       const C = F.photo && this.cutCache(F);
       const lk = this.layerKey;
-      if (k === 'photo' || !C.cut) { x.drawImage(F.photo, 0, 0); }
+      if (this.playing && C.cut) { this.drawParts(x, F, this.playing.P, this.playing.pose, this.playing.chamber); }
+      else if (k === 'photo' || !C.cut) { x.drawImage(F.photo, 0, 0); }
       else if (k === 'save' || (k === 'face' && this.previewOpen)) { x.drawImage(this.composite(F, this.shading(F), { open: this.previewOpen, noCap: this.previewNoCap && k === 'save' }), 0, 0); }
       else {
         if (k === 'mask' && this.showBg) { x.globalAlpha = 0.28; x.drawImage(F.photo, 0, 0); x.globalAlpha = 1; }
         x.drawImage(C.cut, 0, 0);
         if (k === 'mask') { x.globalAlpha = 0.12; x.drawImage(C.t.mask, 0, 0); x.globalAlpha = 1; }
-        if (k === 'front' && C.t.front) { x.globalAlpha = 0.38; x.drawImage(C.t.front, 0, 0); x.globalAlpha = 1; }
+        if (k === 'front' && C.t.front) {
+          x.globalAlpha = 0.38; x.drawImage(C.t.front, 0, 0); x.globalAlpha = 1;
+          if (this.hinge !== 'none') { x.save(); x.globalAlpha = 0.3; this.applyPose(x, this.openPose(F), F); x.drawImage(C.t.front, 0, 0); x.restore(); }   // where it ends up when open
+        }
         if (k === 'knob') { const kc = this.knobCanvas(F, this.shading(F)); if (kc) x.drawImage(kc.c, kc.x0, kc.y0); if (C.t.knob) { x.globalAlpha = 0.35; x.drawImage(C.t.knob, 0, 0); x.globalAlpha = 1; } }
         if (k === 'cap') { const cc = this.capCanvas(F, this.shading(F)); if (cc) x.drawImage(cc.c, cc.cl, cc.ct); if (C.t.cap) { x.globalAlpha = cc ? 0.18 : 0.45; x.drawImage(C.t.cap, 0, 0); x.globalAlpha = 1; } }
         if (k === 'face' && C.t.front && this.hinge !== 'none') { x.globalAlpha = 0.18; x.drawImage(C.t.front, 0, 0); x.globalAlpha = 1; }
@@ -810,10 +954,35 @@
       if (k === 'knob' && F.knobEll) { this.paintEllipse(x, F.knobEll, COL.knob, P, this.tool === 'ellipse'); if (this.tool === 'mesh' && F.knobMesh) this.paintMesh(x, F.knobMesh.n, F.knobMesh.uv.map(([u, v]) => ellPoint(F.knobEll, u, v)), P); }
       if (k === 'cap' && this.tool === 'mesh' && F.capMesh) { const sh = this.shading(F); if (sh && sh.cap) { const { cl, ct, w, h } = sh.cap; this.paintMesh(x, F.capMesh.n, F.capMesh.pts.map(([fx, fy]) => [cl + fx * w, ct + fy * h]), P); } }
       if (k === 'face' && F.faceEll && this.hinge !== 'none') this.paintEllipse(x, F.faceEll, COL.face, P, this.tool === 'ellipse', true);
+      if (k === 'front' && this.hinge !== 'none' && C.cut && !this.playing) this.paintHinge(x, F, P);
       if (this.lasso && this.lasso.length > 1) { x.strokeStyle = '#fff'; x.setLineDash([5, 4]); x.lineWidth = 1.5; x.beginPath(); this.lasso.forEach((p, i) => x[i ? 'lineTo' : 'moveTo'](...P(...p))); x.stroke(); x.setLineDash([]); }
       if (this.poly && this.poly.length) { x.strokeStyle = '#fff'; x.lineWidth = 1.5; x.beginPath(); this.poly.forEach((p, i) => x[i ? 'lineTo' : 'moveTo'](...P(...p))); if (this.hover) x.lineTo(...P(...this.hover)); x.stroke(); this.poly.forEach((p, i) => { x.fillStyle = i ? '#fff' : '#ffd400'; x.fillRect(P(...p)[0] - 3, P(...p)[1] - 3, 6, 6); }); }
       if (this.rectDrag) { const [a, b] = this.rectDrag, [ax, ay] = P(...a), [bx, by] = P(...b); x.strokeStyle = '#fff'; x.setLineDash([6, 4]); x.lineWidth = 1.5; x.strokeRect(ax, ay, bx - ax, by - ay); x.setLineDash([]); }
       if (this.hover && ['keep', 'remove', 'paint', 'erase'].includes(this.tool)) { const [hx, hy] = P(...this.hover); x.strokeStyle = this.tool === 'keep' ? '#00c853' : this.tool === 'remove' ? '#ff1744' : '#fff'; x.lineWidth = 1.5; x.beginPath(); x.arc(hx, hy, this.brush / 2, 0, Math.PI * 2); x.stroke(); }
+    }
+    hingeHandle(F) {
+      if (this.hinge === 'slide') { const o = this.slideOrigin(F), v = this.slideVec(F); return { kind: 'tip', o, p: [o[0] + v.px, o[1] + v.py] }; }
+      return { kind: 'pivot', p: this.pivotPx(F) };
+    }
+    paintHinge(x, F, P) {
+      const h = this.hingeHandle(F), col = COL.front, [hx, hy] = P(...h.p);
+      x.save(); x.lineWidth = 2; x.strokeStyle = col; x.fillStyle = col;
+      if (h.kind === 'tip') {
+        const [ox, oy] = P(...h.o), a = Math.atan2(hy - oy, hx - ox);
+        x.setLineDash([6, 4]); x.beginPath(); x.moveTo(ox, oy); x.lineTo(hx, hy); x.stroke(); x.setLineDash([]);
+        x.beginPath(); x.moveTo(hx, hy); x.lineTo(hx - 12 * Math.cos(a - 0.45), hy - 12 * Math.sin(a - 0.45)); x.lineTo(hx - 12 * Math.cos(a + 0.45), hy - 12 * Math.sin(a + 0.45)); x.closePath(); x.fill();
+        x.beginPath(); x.arc(ox, oy, 4, 0, Math.PI * 2); x.fill();
+        x.beginPath(); x.arc(hx, hy, 8, 0, Math.PI * 2); x.strokeStyle = '#fff'; x.stroke();
+      } else {
+        // the swing: an arc from straight up through the opening angle
+        const R = 46, a0 = -Math.PI / 2, a1 = a0 + rad(this.H.angle);
+        x.globalAlpha = 0.85; x.beginPath(); x.moveTo(hx, hy); x.arc(hx, hy, R, Math.min(a0, a1), Math.max(a0, a1)); x.closePath(); x.fillStyle = 'rgba(232,163,58,.25)'; x.fill(); x.globalAlpha = 1;
+        x.beginPath(); x.moveTo(hx, hy); x.lineTo(hx + R * Math.cos(a1), hy + R * Math.sin(a1)); x.stroke();
+        x.strokeStyle = '#fff'; x.lineWidth = 3; x.beginPath(); x.moveTo(hx - 14, hy); x.lineTo(hx + 14, hy); x.moveTo(hx, hy - 14); x.lineTo(hx, hy + 14); x.stroke();
+        x.strokeStyle = col; x.lineWidth = 1.5; x.beginPath(); x.moveTo(hx - 14, hy); x.lineTo(hx + 14, hy); x.moveTo(hx, hy - 14); x.lineTo(hx, hy + 14); x.stroke();
+        x.beginPath(); x.arc(hx, hy, 8, 0, Math.PI * 2); x.strokeStyle = '#fff'; x.lineWidth = 2; x.stroke();
+      }
+      x.restore();
     }
     paintPoints(x, V, P) {
       x.lineWidth = 1; x.strokeStyle = 'rgba(255,255,255,.75)';
@@ -881,6 +1050,22 @@
           v.addEventListener('pointermove', mv); this.drag = 'pan'; end(() => v.classList.remove('panning')); return;
         }
         const lk = this.layerKey, k = STEPS[this.step].k;
+        if (k === 'front' && this.hinge !== 'none' && F.layers.mask) {
+          const h = this.hingeHandle(F), near = Math.hypot((h.p[0] - X) * this.view.s, (h.p[1] - Y) * this.view.s) < 14;
+          if (near || tool === 'hinge') {
+            const set = (mx, my) => {
+              if (h.kind === 'pivot') { this.H.pivotPx = [mx, my]; this.H.pivotPct = null; }
+              else { const b = this.frameBox(F), ddx = (mx - h.o[0]) / b.BW * 100, ddy = (my - h.o[1]) / b.BH * 100; this.H.dist = clamp(r2(Math.hypot(ddx, ddy)), 0.5, 60); this.H.dir = r2(((deg(Math.atan2(ddy, ddx)) % 360) + 360) % 360); }
+              this.dirty = true; this.draw();
+            };
+            if (!near) set(X, Y);
+            mv = (m) => { const [mx, my] = this.toImg(m); set(mx, my); };
+            v.addEventListener('pointermove', mv); this.drag = 'hinge';
+            end(() => this.renderSide());
+            return;
+          }
+        }
+        if (tool === 'hinge') return;
         if (['keep', 'remove', 'paint', 'erase'].includes(tool)) {
           if (!lk || (lk !== 'mask' && !F.layers.mask)) { this.toast('Cut out the grinder first (step 2).'); return; }
           this.pushUndo();
@@ -1024,12 +1209,12 @@
       try {
         const { cv } = await loadCV();
         // one frame for every color: the union of the cut-outs, with room above for the funnel
-        let X0 = Infinity, Y0 = Infinity, X1 = 0, Y1 = 0; const W = list[0].photo.width, H = list[0].photo.height;
-        list.forEach((F) => { const b = bbox(F.layers.mask); if (b) { X0 = Math.min(X0, b.x); Y0 = Math.min(Y0, b.y); X1 = Math.max(X1, b.x + b.w); Y1 = Math.max(Y1, b.y + b.h); } });
-        X0 = Math.max(0, Math.floor(X0 - W * 0.004)); Y0 = Math.max(0, Math.floor(Y0 - H * 0.02)); X1 = Math.min(W, Math.ceil(X1 + W * 0.004)); Y1 = Math.min(H, Math.ceil(Y1 + H * 0.004));
-        const BW = X1 - X0, BH = Y1 - Y0, pc = (x, y, w, h) => [r3((x - X0) / BW * 100), r3((y - Y0) / BH * 100), r3(w / BW * 100), r3(h / BH * 100)];
+        const pv = this.pivotPx(list[0]);                 // the hinge point in photo pixels, before the frame moves
+        const { X0, Y0, BW, BH } = cropOf(list), pc = (x, y, w, h) => [r3((x - X0) / BW * 100), r3((y - Y0) / BH * 100), r3(w / BW * 100), r3(h / BH * 100)];
         const crop = (c, type) => { const o = canvas(BW, BH), x = o.getContext('2d'); if (type === 'jpg') { x.fillStyle = '#fff'; x.fillRect(0, 0, BW, BH); } x.drawImage(c, -X0, -Y0); return o; };
-        const ver = Date.now().toString(36), key = slugify(this.g.key || this.g.name || 'grinder'), jobs = [], geom = { box: [BW, BH], shadeMax: SHADE_MAX, hinge: { mode: this.hinge } }, finishes = {};
+        const ver = Date.now().toString(36), key = slugify(this.g.key || this.g.name || 'grinder'), jobs = [], geom = { box: [BW, BH], shadeMax: SHADE_MAX }, finishes = {};
+        if (this.H.pivotPx || this.H.pivotPct) this.H.pivotPx = pv;
+        geom.hinge = this.hingeOut({ X0, Y0, BW, BH }, list[0]);
         for (const F of list) {
           const sh = { knob: F.knobEll ? knobShade(cv, F, { contrast: this.contrast, side: this.side }) : null, cap: F.layers.cap ? capShade(cv, F) : null };
           const files = {}, add = (part, c, type = 'png') => { files[part] = null; jobs.push({ F, part, c, type, name: `${key}-${F.slug}-${part.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())}-${ver}.${type}` }); };
@@ -1053,7 +1238,7 @@
             if (F.steel) { const m = canvas(c.w, c.h); m.getContext('2d').drawImage(masked(F.steel, c.region), c.cl, c.ct, c.w, c.h, 0, 0, c.w, c.h); add('capMetal', m); }
             else if (F.capMetalImg) { const m = canvas(c.w, c.h); m.getContext('2d').drawImage(F.capMetalImg, 0, 0, c.w, c.h); add('capMetal', m); }
           }
-          if (F.faceEll && this.hinge !== 'none' && front) { const E = F.faceEll; G.face = { c: [r3((E.cx - X0) / BW * 100), r3((E.cy - Y0) / BH * 100)], w: r3(E.rx / BW * 100), h: r3(E.ry / BH * 100), rot: r2(deg(E.a)) }; G.open = this.hinge === 'slide' ? this.open : 25; }
+          if (F.faceEll && this.hinge !== 'none' && front) { const E = F.faceEll; G.face = { c: [r3((E.cx - X0) / BW * 100), r3((E.cy - Y0) / BH * 100)], w: r3(E.rx / BW * 100), h: r3(E.ry / BH * 100), rot: r2(deg(E.a)) }; G.open = this.hinge === 'slide' ? r2(this.H.dist) : 25; }
           geom[F.slug] = G; finishes[F.slug] = files;
         }
         let done = 0;
@@ -1068,6 +1253,7 @@
         Object.values(finishes).forEach((f) => Object.keys(f).forEach((k) => { if (!f[k]) delete f[k]; }));
         this.g.art = { source: 'files', finishes };
         this.g.geom = geom;
+        list.forEach((F) => { if (F.photo) F.fromArt = false; });
         this.dirty = false;
         if (this.o.onChange) this.o.onChange();
         msg.className = 'zs-ok'; msg.textContent = `Saved ${jobs.length} files for ${list.map((F) => F.name).join(' and ')}. Save the catalog to publish them.`;
@@ -1130,6 +1316,8 @@
         <p>The builder uses the square as the ${this.kind === 'cap' ? 'cap material. The middle strip becomes the cap edge.' : 'wood on the accent piece.'}</p>
         <canvas data-r="pv" width="240" height="240" class="zs-thumb"></canvas>
         <label class="zs-field"><span>Turn the grain: <b data-r="rotV">${this.rot}&deg;</b></span><input type="range" min="-180" max="180" step="1" value="${this.rot}" data-r="rot"></label>
+        <div class="zs-k">Photo</div><div class="zs-row"><button type="button" class="zs-btn" data-act="newphoto">Upload a photo</button>${this.o.pickFile ? '<button type="button" class="zs-btn" data-act="newfiles">Shopify Files</button>' : ''}</div>
+        ${this.newSrc ? '<p style="font-size:12px">New photo. It is saved with the texture.</p>' : '<p style="font-size:12px">Starts from the product photo. Use a cleaner close-up if that photo has props in it.</p>'}
         <button type="button" class="zs-btn full" data-act="cut">${this.cut ? 'Undo the cut-out' : 'Remove the background'}</button>
         <p style="font-size:12px">Remove the background when the square includes the edge of the piece.</p>
         <button type="button" class="zs-btn full" data-act="reset">Reset</button>
@@ -1143,12 +1331,26 @@
         catch (e) { this.q('msg').className = 'zs-warn'; this.q('msg').textContent = e.message; } finally { this.q('busy').classList.remove('on'); }
       };
       $('[data-act="apply"]', this.root).onclick = () => this.apply();
+      $('[data-act="newphoto"]', this.root).onclick = async () => { const file = await pickFile(); if (file) this.useSource({ blob: file, url: URL.createObjectURL(file), name: file.name }); };
+      const nf = $('[data-act="newfiles"]', this.root); if (nf) nf.onclick = async () => { const u = await this.o.pickFile({ title: `Photo for ${this.item.title || 'the texture'}` }); if (u) this.useSource({ url: u }); };
       this.preview();
+    }
+    async useSource(src) {
+      this.q('busy').classList.add('on');
+      try {
+        this.img = imageCanvas(await loadImage(src.url)); this.cut = null; this.rot = 0; this.newSrc = src;
+        const W = this.img.width, H = this.img.height, s = Math.min(W, H) * (this.kind === 'cap' ? 0.66 : 0.7); this.sq = { x: (W - s) / 2, y: (H - s) / 2, s };
+        this.renderSide(); this.fit();
+      } catch (e) { this.q('msg').className = 'zs-warn'; this.q('msg').textContent = e.message; } finally { this.q('busy').classList.remove('on'); }
     }
     async apply() {
       const msg = this.q('msg'), T = this.texNow();
       try {
-        if (this.cut && this.cut !== this.img) {
+        if (this.newSrc && !(this.cut && this.cut !== this.img)) {
+          // a new photo without a cut-out: Shopify Files photos are used as they are, computer photos are uploaded first
+          if (this.newSrc.blob) { if (!this.o.upload) throw new Error('Saving is not available here.'); msg.textContent = 'Uploading'; this.newSrc = { url: await this.o.upload(this.newSrc.blob, this.newSrc.name || `texture-${Date.now().toString(36)}.jpg`) }; }
+          T.src = this.newSrc.url;
+        } else if (this.cut && this.cut !== this.img) {
           if (!this.o.upload) throw new Error('Saving is not available here.');
           msg.textContent = 'Uploading';
           T.src = await this.o.upload(await toBlob(this.cut), `texture-${slugify(this.item.title || this.item.id)}-${Date.now().toString(36)}.png`);
@@ -1179,10 +1381,232 @@
     }
   }
 
+  /* ======================================================================
+     Cut-out editor: any product photo to a transparent PNG (burrs, accessories, in-the-box items)
+     ====================================================================== */
+  const BGS = [['checker', 'See-through'], ['dark', 'Store'], ['light', 'White']];
+  class CutoutEditor {
+    constructor(host, opts) {
+      this.host = host; this.o = opts || {}; this.view = { s: 1, x: 0, y: 0 }; this.tool = 'keep'; this.brush = 26;
+      this.feather = 0.6; this.detail = 1.2; this.smooth = true; this.trim = true; this.square = false; this.pad = 6; this.bg = 'checker'; this.showBg = true;
+      this.img = null; this.mask = null; this.vec = null; this.hints = null; this.undoStack = []; this.keys = {};
+      host.innerHTML = `<div class="zs cut" data-zs>
+        <div class="zs-top"><h2>Cut out</h2><span class="zs-sub">${esc(this.o.title || '')}</span></div>
+        <div class="zs-main"><div class="zs-tools" data-r="tools"></div>
+          <div class="zs-view" data-r="view"><canvas data-r="cv"></canvas>
+            <div class="zs-zoom"><button type="button" data-z="out" aria-label="Zoom out">&minus;</button><span data-r="zl">100%</span><button type="button" data-z="in" aria-label="Zoom in">+</button><button type="button" data-z="fit">Fit</button></div>
+            <div class="zs-busy" data-r="busy"><div><span class="zs-spin"></span><span data-r="busyT">Working</span></div></div></div></div>
+        <aside class="zs-side" data-r="side"></aside></div>`;
+      this.root = $('[data-zs]', host); this.q = (r) => $(`[data-r="${r}"]`, this.root); this.cv = this.q('cv');
+      $$('[data-z]', this.root).forEach((b) => { b.onclick = () => (b.dataset.z === 'fit' ? this.fit() : this.zoomBy(b.dataset.z === 'in' ? 1.25 : 0.8)); });
+      this.ro = new ResizeObserver(() => this.resize()); this.ro.observe(this.q('view'));
+      this.bindPointer(); this.bindKeys(); this.renderTools(); this.renderSide();
+      if (this.o.image) this.setImage(this.o.image);
+    }
+    destroy() { this.ro.disconnect(); document.removeEventListener('keydown', this._kd); document.removeEventListener('keyup', this._ku); this.host.innerHTML = ''; }
+    busy(t) { const b = this.q('busy'); b.classList.toggle('on', !!t); if (t) this.q('busyT').textContent = t; }
+    say(t, cls = 'zs-warn') { const m = this.q('msg'); if (m) { m.className = cls; m.textContent = t; } this.lastMessage = t; }
+    async setImage(url) {
+      this.busy('Loading the photo');
+      try {
+        this.img = imageCanvas(await loadImage(url)); this.mask = null; this.vec = null; this.hints = null; this.undoStack = []; this.src = url;
+        this.fit(); this.renderSide();
+      } catch (e) { this.busy(false); this.say(e.message); return; }
+      this.busy(false);
+      await this.auto();
+    }
+    async auto() {
+      if (!this.img) return;
+      this.busy('Cutting out');
+      try {
+        if (this.mask) this.pushUndo();
+        const o = { keep: 0.04 }; if (this.hints) o.hints = this.hints; if (this.hints && this.mask) o.prior = this.mask;
+        this.vec = { rings: await autoCutBest(this.img, o), smooth: this.smooth };
+        this.fromVec(); this.say('', '');
+      } catch (e) { if (this.mask) this.undoStack.pop(); this.say(e.message); } finally { this.busy(false); this.renderSide(); this.draw(); }
+    }
+    fromVec() { if (this.vec) this.mask = renderRings(this.vec.rings, this.img.width, this.img.height, { smooth: this.vec.smooth !== false, feather: this.feather }); this._out = null; this.draw(); this.preview(); }
+    async crisp(again) {
+      if (!this.mask) return;
+      this.busy('Tracing the edges');
+      try {
+        if (!again) this.pushUndo();
+        const src = again && this.vec ? renderRings(this.vec.rings, this.img.width, this.img.height, { smooth: this.vec.smooth !== false }) : this.mask;
+        this.vec = { rings: await vectorize(src, this.detail), smooth: this.smooth }; this.fromVec(); this.tool = 'points'; this.renderTools();
+      } catch (e) { this.say(e.message); } finally { this.busy(false); }
+    }
+    pushUndo() { this.undoStack.push({ mask: this.mask, vec: JSON.stringify(this.vec), hints: this.hints }); if (this.undoStack.length > 20) this.undoStack.shift(); const b = $('[data-act="undo"]', this.q('tools')); if (b) b.disabled = false; }
+    undo() { const u = this.undoStack.pop(); if (!u) return; this.mask = u.mask; this.vec = JSON.parse(u.vec); this.hints = u.hints; this._out = null; this.renderTools(); this.draw(); this.preview(); }
+    /* the PNG: the object on a see-through background, trimmed and padded, square if asked */
+    output() {
+      if (!this.img || !this.mask) return null;
+      if (this._out) return this._out;
+      const cut = masked(this.img, this.mask), W = cut.width, H = cut.height;
+      const b = this.trim ? bbox(this.mask, 10) : { x: 0, y: 0, w: W, h: H };
+      if (!b) return null;
+      const p = this.trim || this.square ? Math.round(Math.max(b.w, b.h) * this.pad / 100) : 0;
+      let ow = b.w + 2 * p, oh = b.h + 2 * p; if (this.square) ow = oh = Math.max(ow, oh);
+      const o = canvas(ow, oh); o.getContext('2d').drawImage(cut, b.x, b.y, b.w, b.h, Math.round((ow - b.w) / 2), Math.round((oh - b.h) / 2), b.w, b.h);
+      this._out = o; return o;
+    }
+    preview() {
+      const c = this.q('pv'); if (!c) return;
+      const x = c.getContext('2d'), o = this.output(); x.clearRect(0, 0, c.width, c.height);
+      if (this.bg !== 'checker') { x.fillStyle = this.bg === 'dark' ? '#0a0b0d' : '#fff'; x.fillRect(0, 0, c.width, c.height); }
+      if (!o) return;
+      const k = Math.min((c.width - 20) / o.width, (c.height - 20) / o.height);
+      x.imageSmoothingQuality = 'high'; x.drawImage(o, (c.width - o.width * k) / 2, (c.height - o.height * k) / 2, o.width * k, o.height * k);
+      const sz = this.q('size'); if (sz) sz.textContent = `${o.width} x ${o.height} px`;
+    }
+    async save() {
+      const o = this.output();
+      if (!o) { this.say('Cut out the photo first.'); return; }
+      if (!this.o.upload) { this.say('Saving is not available here.'); return; }
+      const btn = $('[data-act="save"]', this.q('side')); if (btn) btn.disabled = true;
+      this.say('Uploading', 'zs-tip');
+      try {
+        const url = await this.o.upload(await toBlob(o), `${slugify(this.o.title || 'cutout') || 'cutout'}-cutout-${Date.now().toString(36)}.png`);
+        if (!url) throw new Error('The file did not upload.');
+        this.result = url; this.say('Cut-out saved.', 'zs-ok');
+        if (this.o.onDone) this.o.onDone(url);
+      } catch (e) { this.say('Not saved: ' + e.message); } finally { if (btn) btn.disabled = false; }
+    }
+    renderTools() {
+      const T = (id, label, dot, title) => `<button type="button" class="zs-tool" data-t="${id}" aria-pressed="${this.tool === id}" title="${esc(title || label)}">${dot ? `<span class="dot" style="background:${dot}"></span>` : ''}${label}</button>`;
+      const brushy = ['keep', 'remove', 'paint', 'erase'].includes(this.tool);
+      this.q('tools').innerHTML = [T('keep', 'Keep', '#00c853', 'Paint over parts to keep. The cut-out updates when you let go.'), T('remove', 'Remove', '#ff1744', 'Paint over background to remove. The cut-out updates when you let go.'), '<span class="sep"></span>',
+        T('paint', 'Paint'), T('erase', 'Erase'), T('points', 'Edit points'), '<span class="sep"></span>', T('pan', 'Move view')].join('') + '<span style="flex:1"></span>'
+        + (brushy ? `<label>Brush <input type="range" min="4" max="120" value="${this.brush}" data-r="brush"></label>` : '')
+        + `<button type="button" class="zs-tool" data-act="undo" ${this.undoStack.length ? '' : 'disabled'} title="Undo (Ctrl+Z)">Undo</button>`;
+      $$('[data-t]', this.q('tools')).forEach((b) => { b.onclick = () => { this.tool = b.dataset.t; if (this.tool === 'points' && !this.vec) this.crisp(); this.renderTools(); this.draw(); }; });
+      const br = this.q('brush'); if (br) br.oninput = () => { this.brush = +br.value; };
+      $('[data-act="undo"]', this.q('tools')).onclick = () => this.undo();
+      this.q('view').className = 'zs-view' + (this.tool === 'pan' ? ' pan' : '');
+    }
+    renderSide() {
+      const side = this.q('side'), has = !!this.img;
+      side.innerHTML = `<h3>Cut out</h3><p>${esc(this.o.hint || 'The app removes the background. Fix any spot with Keep and Remove, then save.')}</p>
+        <div class="zs-k">Photo</div>
+        <div class="zs-row"><button type="button" class="zs-btn" data-act="upload">${has ? 'Upload another' : 'Upload a photo'}</button>${this.o.pickFile ? '<button type="button" class="zs-btn" data-act="files">Shopify Files</button>' : ''}</div>
+        ${has ? `<button type="button" class="zs-btn primary full" data-act="auto">${this.mask ? 'Cut out again' : 'Cut out automatically'}</button>
+        <label class="zs-check"><input type="checkbox" data-in="showBg" ${this.showBg ? 'checked' : ''}><span>Show the removed background faintly</span></label>
+        <div class="zs-k">Edges</div>
+        <button type="button" class="zs-btn full" data-act="crisp" ${this.mask ? '' : 'disabled'}>Make edges crisp</button>
+        <label class="zs-field"><span>Detail</span><input type="range" min="0.4" max="4" step="0.1" value="${this.detail}" data-in="detail"><small>Fewer points give smoother lines. More points follow every bump.</small></label>
+        <label class="zs-field"><span>Edge softness</span><input type="range" min="0" max="2" step="0.1" value="${this.feather}" data-in="feather"><small>0 is razor sharp. 0.5 to 1 matches a photo's natural edge.</small></label>
+        <label class="zs-check"><input type="checkbox" data-in="smooth" ${this.smooth ? 'checked' : ''}><span>Smooth curves between points</span></label>
+        <div class="zs-k">Result</div>
+        <label class="zs-check"><input type="checkbox" data-in="trim" ${this.trim ? 'checked' : ''}><span>Trim to the object</span></label>
+        <label class="zs-check"><input type="checkbox" data-in="square" ${this.square ? 'checked' : ''}><span>Make it square</span></label>
+        <label class="zs-field"><span data-lab="pad">Padding: ${this.pad}%</span><input type="range" min="0" max="25" step="1" value="${this.pad}" data-in="pad"></label>
+        <div class="zs-seg">${BGS.map(([k, n]) => `<button type="button" data-bg="${k}" aria-pressed="${this.bg === k}">${n}</button>`).join('')}</div>
+        <canvas data-r="pv" width="240" height="240" class="zs-thumb"></canvas><small class="zs-kbd" data-r="size"></small>
+        <button type="button" class="zs-btn primary full" data-act="save" ${this.mask ? '' : 'disabled'}>Save cut-out</button>` : '<p class="zs-tip">Start with a sharp photo of the item on a plain background.</p>'}
+        <p data-r="msg"></p>`;
+      const act = (n, fn) => { const b = $(`[data-act="${n}"]`, side); if (b) b.onclick = fn; };
+      act('upload', async () => { const f = await pickFile(); if (f) this.setImage(URL.createObjectURL(f)); });
+      act('files', async () => { const u = await this.o.pickFile({ title: this.o.title ? `Photo for ${this.o.title}` : 'Choose a photo' }); if (u) this.setImage(u); });
+      act('auto', () => this.auto()); act('crisp', () => this.crisp()); act('save', () => this.save());
+      $$('[data-bg]', side).forEach((b) => { b.onclick = () => { this.bg = b.dataset.bg; $$('[data-bg]', side).forEach((x) => x.setAttribute('aria-pressed', String(x === b))); this.preview(); }; });
+      $$('[data-in]', side).forEach((el) => {
+        const k = el.dataset.in;
+        el[el.type === 'checkbox' ? 'onchange' : 'oninput'] = () => {
+          const v = el.type === 'checkbox' ? el.checked : +el.value;
+          if (k === 'showBg') { this.showBg = v; this.draw(); return; }
+          if (k === 'smooth') { this.smooth = v; if (this.vec) { this.vec.smooth = v; this.fromVec(); } return; }
+          if (k === 'feather') { this.feather = v; if (this.vec) this.fromVec(); return; }
+          if (k === 'detail') { this.detail = v; clearTimeout(this._dt); this._dt = setTimeout(() => { if (this.vec) this.crisp(true); }, 250); return; }
+          if (k === 'pad') { this.pad = v; const l = $('[data-lab="pad"]', side); if (l) l.textContent = `Padding: ${v}%`; }
+          if (k === 'trim') this.trim = v; if (k === 'square') this.square = v;
+          this._out = null; this.preview();
+        };
+      });
+      this.preview();
+    }
+    resize() { const v = this.q('view'), d = devicePixelRatio || 1; this.cv.width = Math.round(v.clientWidth * d); this.cv.height = Math.round(v.clientHeight * d); this.fit(); }
+    fit() { const v = this.q('view'); if (!this.img || !v.clientWidth) { this.draw(); return; } const s = Math.min(v.clientWidth / this.img.width, v.clientHeight / this.img.height) * 0.92; this.view = { s, x: (v.clientWidth - this.img.width * s) / 2, y: (v.clientHeight - this.img.height * s) / 2 }; this.draw(); }
+    zoomBy(k, cx, cy) { const v = this.q('view'); if (cx == null) { cx = v.clientWidth / 2; cy = v.clientHeight / 2; } const s = clamp(this.view.s * k, 0.05, 16), r = s / this.view.s; this.view = { s, x: cx - (cx - this.view.x) * r, y: cy - (cy - this.view.y) * r }; this.draw(); }
+    toImg(e) { const b = this.cv.getBoundingClientRect(), sx = e.clientX - b.left, sy = e.clientY - b.top; return [(sx - this.view.x) / this.view.s, (sy - this.view.y) / this.view.s, sx, sy]; }
+    draw() { if (this._raf) return; this._raf = requestAnimationFrame(() => { this._raf = 0; this.paint(); }); }
+    paint() {
+      const x = this.cv.getContext('2d'), d = devicePixelRatio || 1, vw = this.cv.width / d, vh = this.cv.height / d;
+      x.setTransform(d, 0, 0, d, 0, 0); x.fillStyle = '#2a2b2e'; x.fillRect(0, 0, vw, vh);
+      this.q('zl').textContent = Math.round(this.view.s * 100) + '%';
+      if (!this.img) { x.fillStyle = '#c9c9c9'; x.font = '600 15px -apple-system,Segoe UI,sans-serif'; x.textAlign = 'center'; x.fillText('Add a photo to start', vw / 2, vh / 2); return; }
+      const { s, x: tx, y: ty } = this.view, W = this.img.width, H = this.img.height;
+      x.setTransform(d * s, 0, 0, d * s, d * tx, d * ty);
+      x.save(); x.fillStyle = this._checker || (this._checker = (() => { const c = canvas(16, 16), y = c.getContext('2d'); y.fillStyle = '#3a3b3f'; y.fillRect(0, 0, 16, 16); y.fillStyle = '#323336'; y.fillRect(0, 0, 8, 8); y.fillRect(8, 8, 8, 8); return x.createPattern(c, 'repeat'); })()); x.fillRect(0, 0, W, H); x.restore();
+      if (this.mask) {
+        if (this.showBg) { x.globalAlpha = 0.25; x.drawImage(this.img, 0, 0); x.globalAlpha = 1; }
+        if (!this._cut || this._cutFor !== this.mask) { this._cut = masked(this.img, this.mask); this._cutFor = this.mask; }
+        x.drawImage(this._cut, 0, 0);
+      } else x.drawImage(this.img, 0, 0);
+      if (this.hints) { x.globalAlpha = 0.5; x.drawImage(this.hints, 0, 0); x.globalAlpha = 1; }
+      x.setTransform(d, 0, 0, d, 0, 0);
+      const P = (X, Y) => [tx + X * s, ty + Y * s];
+      if (this.tool === 'points' && this.vec) {
+        x.lineWidth = 1; x.strokeStyle = 'rgba(255,255,255,.75)';
+        this.vec.rings.forEach((r, ri) => { x.beginPath(); r.pts.forEach((p, i) => x[i ? 'lineTo' : 'moveTo'](...P(...p))); x.closePath(); x.stroke();
+          r.pts.forEach((p, i) => { const [a, b] = P(...p), sel = this.sel && this.sel[0] === ri && this.sel[1] === i; x.fillStyle = sel ? '#005bd3' : '#fff'; x.strokeStyle = '#1a1a1a'; x.fillRect(a - 3, b - 3, 6, 6); x.strokeRect(a - 3, b - 3, 6, 6); }); });
+      }
+      if (this.hover && ['keep', 'remove', 'paint', 'erase'].includes(this.tool)) { const [hx, hy] = P(...this.hover); x.strokeStyle = this.tool === 'keep' ? '#00c853' : this.tool === 'remove' ? '#ff1744' : '#fff'; x.lineWidth = 1.5; x.beginPath(); x.arc(hx, hy, this.brush / 2, 0, Math.PI * 2); x.stroke(); }
+    }
+    bindPointer() {
+      const v = this.q('view');
+      v.addEventListener('wheel', (e) => { e.preventDefault(); const [, , sx, sy] = this.toImg(e); this.zoomBy(Math.exp(-e.deltaY * 0.0015), sx, sy); }, { passive: false });
+      v.addEventListener('pointermove', (e) => { if (!this.drag && ['keep', 'remove', 'paint', 'erase'].includes(this.tool)) { this.hover = this.toImg(e).slice(0, 2); this.draw(); } });
+      v.addEventListener('pointerleave', () => { this.hover = null; this.draw(); });
+      v.addEventListener('pointerdown', (e) => {
+        if (!this.img) return;
+        v.setPointerCapture(e.pointerId);
+        const [X, Y] = this.toImg(e), tool = (e.button === 1 || this.keys.space) ? 'pan' : this.tool;
+        let mv = () => {};
+        const end = (fn) => { const up = () => { v.removeEventListener('pointermove', mv); v.removeEventListener('pointerup', up); v.removeEventListener('pointercancel', up); this.drag = null; if (fn) fn(); }; v.addEventListener('pointerup', up); v.addEventListener('pointercancel', up); };
+        if (tool === 'pan') { const v0 = { ...this.view }; mv = (m) => { this.view = { ...v0, x: v0.x + m.clientX - e.clientX, y: v0.y + m.clientY - e.clientY }; this.draw(); }; v.addEventListener('pointermove', mv); this.drag = 'pan'; end(); return; }
+        if (['keep', 'remove', 'paint', 'erase'].includes(tool)) {
+          const hint = tool === 'keep' || tool === 'remove';
+          if (!hint && !this.mask) return;
+          this.pushUndo();
+          let target;
+          if (hint) { this.hints = this.hints ? copyCanvas(this.hints) : canvas(this.img.width, this.img.height); target = this.hints; }
+          else { this.mask = copyCanvas(this.mask); target = this.mask; this.vec = null; }
+          const g = target.getContext('2d'), r = this.brush / 2 / this.view.s;
+          g.lineCap = g.lineJoin = 'round'; g.lineWidth = 2 * r; g.globalCompositeOperation = tool === 'erase' ? 'destination-out' : 'source-over';
+          g.strokeStyle = g.fillStyle = tool === 'keep' ? 'rgb(0,200,83)' : tool === 'remove' ? 'rgb(255,23,68)' : '#fff';
+          let last = [X, Y]; g.beginPath(); g.arc(X, Y, r, 0, Math.PI * 2); g.fill();
+          mv = (m) => { const [mx, my] = this.toImg(m); g.beginPath(); g.moveTo(...last); g.lineTo(mx, my); g.stroke(); last = [mx, my]; this.hover = last; this._cutFor = null; this.draw(); };
+          v.addEventListener('pointermove', mv); this.drag = 'brush';
+          end(() => { g.globalCompositeOperation = 'source-over'; this._out = null; if (hint) { this.undoStack.pop(); this.auto(); } else { this.draw(); this.preview(); } });
+          return;
+        }
+        if (tool === 'points' && this.vec) {
+          let best = null;
+          this.vec.rings.forEach((r, ri) => r.pts.forEach((p, i) => { const dd = Math.hypot((p[0] - X) * this.view.s, (p[1] - Y) * this.view.s); if (dd < 8 && (!best || dd < best[2])) best = [ri, i, dd]; }));
+          this.sel = best ? [best[0], best[1]] : null; this.draw(); if (!best) return;
+          this.pushUndo(); this.vec = JSON.parse(JSON.stringify(this.vec));
+          const pt = this.vec.rings[best[0]].pts[best[1]];
+          mv = (m) => { const [mx, my] = this.toImg(m); pt[0] = mx; pt[1] = my; clearTimeout(this._pt); this._pt = setTimeout(() => this.fromVec(), 30); this.draw(); };
+          v.addEventListener('pointermove', mv); this.drag = 'point'; end(() => this.fromVec());
+        }
+      });
+    }
+    bindKeys() {
+      this._kd = (e) => {
+        if (!this.root.isConnected || /INPUT|SELECT|TEXTAREA/.test((e.target || {}).tagName)) return;
+        if (e.code === 'Space') { this.keys.space = true; e.preventDefault(); }
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); this.undo(); }
+        if ((e.key === 'Delete' || e.key === 'Backspace') && this.sel && this.tool === 'points' && this.vec) { e.preventDefault(); this.pushUndo(); this.vec = JSON.parse(JSON.stringify(this.vec)); const r = this.vec.rings[this.sel[0]]; if (r.pts.length > 3) r.pts.splice(this.sel[1], 1); this.sel = null; this.fromVec(); }
+      };
+      this._ku = (e) => { if (e.code === 'Space') this.keys.space = false; };
+      document.addEventListener('keydown', this._kd); document.addEventListener('keyup', this._ku);
+    }
+  }
+
   window.ZBStudio = {
     open: (host, opts) => new Studio(host, opts),
     openTexture: (host, opts) => new TexEditor(host, opts),
+    openCutout: (host, opts) => new CutoutEditor(host, opts),
     loadCV,
-    _internals: { autoCut, renderRings, vectorize, knobShade, capShade, texSquare, drawMesh }
+    _internals: { autoCut, autoCutBest, renderRings, vectorize, knobShade, capShade, texSquare, drawMesh, hingeFrom, poseAt, chamberAt }
   };
 })();

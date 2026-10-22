@@ -580,16 +580,25 @@
     }
     // the front assembly opens (Z2: dial and accent piece hinge about 25 degrees; Z1: housing and chute slide out along the crease),
     // the burr drops into the grind chamber through the gap, and the front swings shut
+    /** Admin preview: play the opening with the first burr, as if a customer picked it. */
+    async demoOpen() {
+      const b = this.burrs[0], img = this.root.querySelector('.zb-stage') || this.root;
+      const r = img.getBoundingClientRect(), fr = new DOMRect(r.right - 90, r.top + 20, 70, 70);
+      const src = b ? (this.burrImg(b.id) || b.srcs[0]) : '';
+      await this.installBurr(src, fr);
+    }
     installBurr(src, fr) {
       if (this.reduce || !fr) return Promise.resolve();
       const a = this.art();
       if (!a || !a.geom.face || (this.AG.hinge || {}).mode === 'none' || !a.urls.front) return this.fly({ src }, fr, this.knobRect(), { spin: 540, end: 0.2, dur: 1400 });
       return new Promise((res) => {
-        const D = 1800, front = this.q('front'), ch = this.q('chamber'), fc = a.geom.face;
+        const front = this.q('front'), ch = this.q('chamber'), fc = a.geom.face;
         // Z2: hinge on the bottom of the seam so the top drops forward; the chute stays put.
         // Z1 (hinge.mode 'slide'): the dial housing and chute pull straight out along the crease; the funnel stays.
-        const slide = (this.AG.hinge || {}).mode === 'slide', out = a.geom.open || 8;
-        front.style.transformOrigin = slide ? `${fc.c[0]}% ${fc.c[1]}%` : `${fc.c[0]}% ${fc.c[1] + fc.h}%`;
+        // hinge settings (Catalog > the grinder > How it opens): swing angle and pivot, or slide distance and direction, and speed
+        const H = this.AG.hinge || {}, slide = H.mode === 'slide', out = H.dist != null ? +H.dist : a.geom.open || 8;
+        const D = H.ms ? Math.max(600, Math.min(4000, +H.ms)) : 1800;
+        front.style.transformOrigin = H.pivot ? `${H.pivot[0]}% ${H.pivot[1]}%` : slide ? `${fc.c[0]}% ${fc.c[1]}%` : `${fc.c[0]}% ${fc.c[1] + fc.h}%`;
         const rect = ch.getBoundingClientRect();
         const aspect = fc.w * this.AG.box[0] / (fc.h * this.AG.box[1]);
         const seat = rect.height * 0.5;
@@ -609,7 +618,9 @@
           { transform: t(tx, ty, sc * 0.9, aspect, 540), opacity: 0 }
         ], { duration: D, easing: 'cubic-bezier(.5,.05,.35,1)', fill: 'forwards' });
         // slide along the cylinder's axis (it tilts slightly down toward the dial), not straight sideways
-        const pose = slide ? ['translate(0%,0%)', `translate(-${out}%,${out * 0.06}%)`, `translate(${out * 0.03}%,0%)`] : ['rotate(0deg)', 'rotate(-25deg)', 'rotate(0.8deg)'];
+        const ang = H.angle != null ? +H.angle : -25;
+        const dir = H.dir != null ? +H.dir * Math.PI / 180 : null, dx = dir == null ? -out : out * Math.cos(dir), dy = dir == null ? out * 0.06 : out * Math.sin(dir);
+        const pose = slide ? ['translate(0%,0%)', `translate(${dx}%,${dy}%)`, `translate(${-dx * 0.03}%,0%)`] : ['rotate(0deg)', `rotate(${ang}deg)`, `rotate(${-ang * 0.032}deg)`];
         front.animate([
           { transform: pose[0], offset: 0 }, { transform: pose[0], offset: 0.14 },
           { transform: pose[1], offset: 0.34, easing: 'cubic-bezier(.3,0,.2,1)' }, { transform: pose[1], offset: 0.7 },
@@ -989,7 +1000,7 @@
     scope.querySelectorAll('[data-zb-root]').forEach((root) => {
       if (root.dataset.zbReady) return;
       root.dataset.zbReady = '1';
-      try { new Builder(root); } catch (e) { console.error('[Zerno builder]', e); }
+      try { root._zb = new Builder(root); } catch (e) { console.error('[Zerno builder]', e); }
     });
   }
   window.ZernoBuilderBoot = boot;

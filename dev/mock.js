@@ -41,9 +41,19 @@
     if (/c: metaobjectByHandle/.test(q)) return { c: byHandle('$app:catalog', 'main'), g: byHandle('$app:burr_guide', 'main') };
     if (/metaobjects\(type:"(\$app:[a-z_]+)"/.test(q)) { const t = q.match(/metaobjects\(type:"(\$app:[a-z_]+)"/)[1]; return { metaobjects: { nodes: store.mos.filter((x) => x.type === t) } }; }
     if (/productVariantsBulkUpdate/.test(q)) { v.v.forEach((x) => { variants[x.id].price = x.price; }); return { productVariantsBulkUpdate: { userErrors: [] } }; }
+    if (/files\(first/.test(q)) {
+      const all = ['z2-jet-black.jpg', 'z1-jet-black.jpg', 'burr-core-blind.png', 'burr-ssp-brew-blind.png', 'incl-cup.png'].map((f, i) => ({ id: `gid://shopify/MediaImage/${900 + i}`, alt: f, image: { url: `/extensions/zerno-builder/assets/${f}`, width: 1000, height: 1000 } }));
+      const term = (v.q || '').replace('media_type:IMAGE', '').trim().toLowerCase();
+      return { files: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: all.filter((n) => !term || n.image.url.toLowerCase().includes(term)) } };
+    }
     if (/orders\(/.test(q)) return { orders: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: orders } };
     if (/nodes\(ids/.test(q)) return { nodes: v.ids.map((id) => variants[id] || byId[id] || null) };
-    if (/products\(first/.test(q)) { const hs = [...v.q.matchAll(/handle:([\w-]+)/g)].map((m) => m[1]); return { products: { nodes: products.filter((p) => hs.includes(p.handle)) } }; }
+    if (/products\((first|last)/.test(q)) {
+      const qq = v.q || '', hs = [...qq.matchAll(/handle:([\w-]+)/g)].map((m) => m[1]), term = qq.replace(/\(?handle:[\w-]+( OR )?\)?/g, '').replace(/\*/g, '').trim().toLowerCase();
+      const list = products.filter((p) => (!hs.length || hs.includes(p.handle)) && (!term || p.title.toLowerCase().includes(term))).map((p) => ({ status: 'ACTIVE', productType: 'Grinder parts', vendor: 'Zerno', ...p }));
+      return { products: { pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null }, nodes: list } };
+    }
+    if (/node\(id:\$id\)\{ \.\.\. on Product/.test(q)) { const p = byId[v.id]; return { node: p ? { status: 'ACTIVE', productType: 'Grinder parts', vendor: 'Zerno', ...p } : null }; }
     throw new Error('mock: unhandled query ' + q.slice(0, 80));
   };
   const realFetch = window.fetch.bind(window);

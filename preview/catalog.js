@@ -120,7 +120,8 @@ window.ZB_DEFAULT_CATALOG = {"version":1,"sizes":[{"key":"64mm","name":"64mm","p
       const G = {};
       cat.grinders.filter((g) => (g.guide ? g.guide.show !== false : true)).filter((g) => (!only || g.key === only) && (!size || size === 'all' || g.size === size)).forEach((g) => {
         const sz = this.size(cat, g.size) || { key: g.size, name: g.size };
-        const variants = shop && shop[g.size];
+        // with live data, a burr size whose product the store does not sell has no burrs to offer, so its grinder drops out
+        const variants = shop ? shop[g.size] || [] : null;
         const burrs = this.burrsForSize(cat, g.size).map((b) => {
           const v = variants ? variants.find((x) => (b.variant && num(b.variant) === Number(x.id)) || (b.code && (() => { try { return new RegExp(b.code, 'i').test(x.title); } catch (e) { return false; } })())) : null;
           const out = { ...b, k: b.key, t: b.name, s: b.short, img: this.asset(base || '', b.image) || (v && v.img) || placeholderBurr() };

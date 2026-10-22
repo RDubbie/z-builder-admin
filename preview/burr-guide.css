@@ -21,7 +21,7 @@
 .zbg-steps button.done .n{background:var(--g-steel);color:var(--g-ink);border-color:var(--g-steel)}
 .zbg-grid{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:clamp(20px,3vw,44px);padding-top:22px;align-items:start}
 .zbg-stage{position:relative;border-radius:4px;overflow:hidden;container-type:inline-size;background:radial-gradient(70% 60% at 50% 40%,color-mix(in srgb,var(--g-stage) 80%,#fff 8%) 0%,var(--g-stage) 48%,var(--g-ink) 100%);padding:clamp(18px,4cqw,40px) clamp(14px,3.5cqw,36px) clamp(18px,3cqw,30px)}
-@media (min-width:961px){.zbg .zbg-stage{position:sticky;top:calc(var(--zb-sticky,16px) + 8px)}}
+@container zbg (min-width:961px){.zbg .zbg-stage{position:sticky;top:calc(var(--zb-sticky,16px) + 8px)}}
 .zbg-sh{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
 .zbg-sh h1{font-family:var(--g-display);font-weight:600;font-size:clamp(24px,5cqw,48px);line-height:1.04;letter-spacing:-.015em;margin:6px 0 0;color:var(--g-fg)}
 .zbg-sh p{margin:0;max-width:34ch;color:var(--g-muted);font-size:13px}
@@ -130,9 +130,13 @@ html.zbg-lock{overflow:hidden}
 .zbg-ov.on .zbg-modal{transform:none}
 .zbg-x{position:absolute;top:10px;right:12px;z-index:6;width:36px;height:36px;border-radius:50%;border:1px solid var(--g-line);background:var(--g-ink);cursor:pointer;font-size:22px;line-height:1}
 .zbg-modal .zbg-top{padding-right:48px}
-@media (max-width:960px){.zbg-grid{grid-template-columns:minmax(0,1fr)}.zbg-modal .zbg-stage{display:none}}
-@media (max-width:560px){.zbg-steps .lbl{display:none}.zbg-btn{padding:11px 16px}.zbg-tot .v{font-size:16px}.zbg-gcard .gm{font-size:34px}.zbg-sh p{display:none}}
+@container zbg (max-width:960px){.zbg-grid{grid-template-columns:minmax(0,1fr)}.zbg-modal .zbg-stage{display:none}}
+@container zbg (max-width:560px){.zbg-steps .lbl{display:none}.zbg-btn{padding:11px 16px}.zbg-tot .v{font-size:16px}.zbg-gcard .gm{font-size:34px}.zbg-sh p{display:none}}
 @media (prefers-reduced-motion:reduce){.zbg *,.zbg-ov *{transition-duration:.01ms!important;animation-duration:.01ms!important}}
 .zbg-note{flex-basis:100%;margin:8px 0 0;font-size:13px;color:var(--g-wood)}
 .zbg-note.err{color:#ff8a7a}
 .zbg-note a{color:inherit;text-decoration:underline}
+
+/* the guide lays itself out by its own width, not the window */
+.zbg,.zbg-modal{container:zbg/inline-size}
+@supports not (container-type:inline-size){@media (min-width:961px){.zbg .zbg-stage{position:sticky;top:calc(var(--zb-sticky,16px) + 8px)}}@media (max-width:960px){.zbg-grid{grid-template-columns:minmax(0,1fr)}.zbg-modal .zbg-stage{display:none}}@media (max-width:560px){.zbg-steps .lbl{display:none}.zbg-btn{padding:11px 16px}.zbg-tot .v{font-size:16px}.zbg-gcard .gm{font-size:34px}.zbg-sh p{display:none}}}

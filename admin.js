@@ -4,9 +4,9 @@
  *
  * Saved in Shopify as app metaobjects, read by the storefront blocks with Liquid:
  *   $app:catalog "main"  grinders, burr sizes, burrs, accessories, textures, art and Burr Guide copy
- *   $app:option_set      one per builder setup, assigned to grinder products (like Globo's option sets)
+ *   $app:option_set      one per builder setup, assigned to grinder products
  *   $app:template        option set layouts saved for reuse
- * Pages: Home, Option sets, Templates, Products, Orders, Catalog, Burr guides, Help.
+ * Pages: Home, Option sets, Products, Orders, Templates, Catalog, Burr guides, Settings, Help.
  * Catalog, Burr guides and the Art studio live in admin-catalog.js and studio.js.
  */
 (() => {
@@ -20,7 +20,9 @@
     { k: 'accessories', name: 'Accessories', kind: 'list', list: 'accessories' }
   ];
   const FIELD = { burrs: 'burr_variants', accents: 'accent_variants', caps: 'cap_variants', accessories: 'accessory_variants' };
-  const NAV = [['home', 'Home'], ['sets', 'Option sets'], ['templates', 'Templates'], ['products', 'Products'], ['orders', 'Orders'], ['catalog', 'Catalog'], ['guides', 'Burr guides'], ['help', 'Help']];
+  const NAV = [['home', 'Home'], ['sets', 'Option sets'], ['products', 'Products'], ['orders', 'Orders'], ['templates', 'Templates'], ['catalog', 'Catalog'], ['guides', 'Burr guides'], ['settings', 'Settings'], ['help', 'Help']];
+  // inside Shopify admin the sidebar and the title bar carry the navigation, so the page skips its own nav row
+  const EMBEDDED = (() => { try { return window.top !== window.self; } catch (e) { return true; } })();
 
   /* ---------- helpers ---------- */
   const $ = (s, el = document) => el.querySelector(s);
@@ -68,7 +70,7 @@
     }
     return out;
   }
-  const PRODUCT = `id title handle templateSuffix featuredMedia { preview { image { url } } } options { name values } variants(first:50){ nodes { ${VARIANT} } }`;
+  const PRODUCT = `id title handle status productType vendor templateSuffix featuredMedia { preview { image { url } } } options { name values } variants(first:50){ nodes { ${VARIANT} } }`;
   async function productsByHandles(handles) {
     const hs = [...new Set(handles.filter(Boolean))];
     const out = [];
@@ -140,6 +142,52 @@
     throw new Error(`${filename} is still processing. Try again in a minute.`);
   }
 
+  /* Pick an image already in Shopify Files (Content > Files). Resolves to its CDN url, or null. */
+  function pickFile({ title = 'Choose from Shopify Files' } = {}) {
+    return new Promise((resolve) => {
+      const ov = document.createElement('div'); ov.className = 'modal-ov';
+      ov.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="mh"><b>${esc(title)}</b><button class="ic" data-x aria-label="Close">&times;</button></div>
+        <div class="mb"><input type="search" placeholder="Search by file name" data-q aria-label="Search files"><div class="fgrid" data-g></div><div class="fmore"><button class="btn sm" data-more hidden>Load more</button></div></div>
+        <div class="mf"><span class="muted" data-n></span><span style="display:flex;gap:8px"><button class="btn" data-x>Cancel</button><button class="btn primary" data-ok disabled>Use this image</button></span></div></div>`;
+      document.body.appendChild(ov);
+      const grid = $('[data-g]', ov), more = $('[data-more]', ov), ok = $('[data-ok]', ov), qIn = $('[data-q]', ov);
+      let sel = null, after = null, term = '', t = null, seq = 0;
+      const done = (v) => { ov.remove(); document.removeEventListener('keydown', key); resolve(v); };
+      const key = (e) => { if (e.key === 'Escape') done(null); };
+      document.addEventListener('keydown', key);
+      $$('[data-x]', ov).forEach((b) => { b.onclick = () => done(null); });
+      ov.onclick = (e) => { if (e.target === ov) done(null); };
+      ok.onclick = () => sel && done(sel.url);
+      const thumb = (u) => u + (u.includes('?') ? '&' : '?') + 'width=240';
+      async function load(reset) {
+        const my = ++seq;
+        if (reset) { after = null; sel = null; ok.disabled = true; grid.innerHTML = '<span class="spin"></span>'; }
+        try {
+          const d = await gql(`query F($q:String,$a:String){ files(first:40, after:$a, sortKey:CREATED_AT, reverse:true, query:$q){ pageInfo { hasNextPage endCursor }
+            nodes { id alt ... on MediaImage { image { url width height } } } } }`, { q: 'media_type:IMAGE' + (term ? ' ' + term : ''), a: after });
+          if (my !== seq) return;
+          if (reset) grid.innerHTML = '';
+          d.files.nodes.filter((n) => n.image && n.image.url).forEach((n) => {
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'ftile';
+            const name = decodeURIComponent(n.image.url.split('?')[0].split('/').pop());
+            b.innerHTML = `<img src="${esc(thumb(n.image.url))}" alt="" loading="lazy"><span>${esc(name)}</span>`;
+            b.title = `${name} · ${n.image.width} x ${n.image.height}`;
+            b.onclick = () => { $$('.ftile', grid).forEach((x) => x.classList.remove('on')); b.classList.add('on'); sel = n.image; ok.disabled = false; $('[data-n]', ov).textContent = `${name}, ${n.image.width} x ${n.image.height} px`; };
+            b.ondblclick = () => done(n.image.url);
+            grid.appendChild(b);
+          });
+          if (!grid.children.length) grid.innerHTML = `<p class="empty">${term ? 'No images match.' : 'No images in Shopify Files yet.'}</p>`;
+          after = d.files.pageInfo.endCursor; more.hidden = !d.files.pageInfo.hasNextPage;
+        } catch (e) {
+          grid.innerHTML = /access|scope|permission|denied/i.test(e.message) ? '<div class="note">Zerno Builder needs permission to read Shopify Files. Run the deploy again and approve the new access.</div>' : errBox(e);
+        }
+      }
+      more.onclick = () => load(false);
+      qIn.oninput = () => { clearTimeout(t); t = setTimeout(() => { term = qIn.value.trim().replace(/[^\w .-]/g, ''); load(true); }, 300); };
+      load(true); qIn.focus();
+    });
+  }
+
   /* ---------- state, save bar and navigation ---------- */
   const A = { view: 'home', sub: '', sets: [], set: null, saved: null, variants: {}, grinders: [], prices: {}, cat: null, catSaved: null, catIsSaved: false, dirty: false, open: { finish: true }, onSave: null, onDiscard: null };
   const app = () => $('#app');
@@ -155,31 +203,38 @@
   const shortName = (g) => String(g.name).replace(/^Zerno\s+/i, '');
 
   /* ---------- routing ----------
-     The page is ?view=<page>, plus #/<page>/<detail> for a detail. The Shopify admin sidebar (ui-nav-menu) links to
-     ?view=<page>; App Bridge changes the iframe's URL without reloading it, so every way the URL can change is watched. */
-  function readRoute() {
-    const h = location.hash.replace(/^#\/?/, '');
-    const q = new URLSearchParams(location.search).get('view');
-    const [view, ...rest] = (h || q || 'home').split('/');
-    return { view: NAV.some(([k]) => k === view) ? view : 'home', sub: rest.join('/') };
+     Each page has its own folder (z-builder-admin/catalog/ and so on, made by tools/sync-shared.mjs) so the Shopify
+     admin sidebar highlights the right item. A detail rides in the hash: catalog/#/catalog/grinders/z1.
+     App Bridge changes the iframe's URL without reloading it, so every way the URL can change is watched. */
+  const ROOT = new URL('./', document.baseURI).pathname;        // the app's folder; index.html pins <base> to it
+  const isView = (v) => NAV.some(([k]) => k === v);
+  const SHARED = ['catalog', 'guides'];                          // pages that edit the same working catalog
+  function viewOf(u) {
+    const p = u.pathname.startsWith(ROOT) ? u.pathname.slice(ROOT.length).split('/')[0] : '';
+    const [hv, ...rest] = u.hash.replace(/^#\/?/, '').split('/');
+    const q = u.searchParams.get('view');
+    const view = isView(p) ? p : isView(hv) ? hv : isView(q) ? q : 'home';
+    return { view, sub: hv === view ? rest.join('/') : '' };
   }
+  const readRoute = () => viewOf(new URL(location.href));
   function urlFor(view, sub = '') {
-    const q = new URLSearchParams(location.search);
-    if (view === 'home') q.delete('view'); else q.set('view', view);
+    const q = new URLSearchParams(location.search); q.delete('view');
     const s = q.toString();
-    return location.pathname + (s ? '?' + s : '') + (sub ? '#/' + view + '/' + sub : '');
+    return ROOT + (view === 'home' ? '' : view + '/') + (s ? '?' + s : '') + (sub ? '#/' + view + '/' + sub : '');
   }
   let lastUrl = location.href;
   function setUrl(view, sub = '') { history.replaceState(null, '', urlFor(view, sub)); lastUrl = location.href; A.view = view; A.sub = sub; }
-  function leaveOk() {
+  function leaveOk(target) {
     if (!A.dirty) return true;
+    if (SHARED.includes(A.view) && SHARED.includes(target)) return true;      // keep catalog edits between Catalog and Burr guides
     if (!confirm('Leave without saving your changes?')) return false;
     if (A.catSaved) A.cat = clone(A.catSaved);            // drop unsaved catalog edits too
+    clean();
     return true;
   }
   function go(view, sub = '') {
-    if (!leaveOk()) return false;
-    clean(); A.onSave = null; A.onDiscard = null;
+    if (!leaveOk(view)) return false;
+    A.onSave = null; A.onDiscard = null;
     setUrl(view, sub);
     route();
     return true;
@@ -188,8 +243,8 @@
     if (location.href === lastUrl) return;
     const r = readRoute();
     if (r.view === A.view && r.sub === A.sub) { lastUrl = location.href; return; }
-    if (!leaveOk()) { history.replaceState(null, '', urlFor(A.view, A.sub)); lastUrl = location.href; return; }
-    lastUrl = location.href; clean(); A.onSave = null; A.onDiscard = null;
+    if (!leaveOk(r.view)) { history.replaceState(null, '', urlFor(A.view, A.sub)); lastUrl = location.href; return; }
+    lastUrl = location.href; A.onSave = null; A.onDiscard = null;
     route();
   }
   function watchUrl() {
@@ -201,8 +256,8 @@
     // App Bridge fires shopify:navigate on the nav link; follow its href ourselves in case it only announces it
     document.addEventListener('shopify:navigate', (e) => {
       const href = e.target && e.target.getAttribute && e.target.getAttribute('href'); if (!href) return;
-      const u = new URL(href, location.href), v = u.searchParams.get('view') || u.hash.replace(/^#\/?/, '').split('/')[0] || 'home';
-      if (v !== A.view) go(NAV.some(([k]) => k === v) ? v : 'home');
+      const v = viewOf(new URL(href, document.baseURI)).view;
+      if (v !== A.view) go(v);
     });
   }
   async function route() {
@@ -210,42 +265,81 @@
     $$('#nav button').forEach((b) => b.setAttribute('aria-current', b.dataset.v === A.view ? 'page' : 'false'));
     body().innerHTML = spin();
     try { await ensureCatalog(); } catch (e) { body().innerHTML = errBox(e); return; }
-    const V = { home: showHome, sets: showSets, templates: showTemplates, products: showProducts, orders: showOrders, help: showHelp };
     const ext = window.ZBAdminCatalog || {};
+    const V = { home: showHome, sets: showSets, templates: showTemplates, orders: showOrders, settings: showSettings, help: showHelp, products: () => (ext.showProducts ? ext.showProducts(A.sub) : (body().innerHTML = errBox('The products page did not load.'))) };
+    if (A.view !== 'home') titleBar((NAV.find(([k]) => k === A.view) || [, 'Zerno Builder'])[1]);
     if (A.view === 'catalog') return ext.showCatalog ? ext.showCatalog(A.sub) : (body().innerHTML = errBox('The catalog page did not load.'));
     if (A.view === 'guides') return ext.showGuides ? ext.showGuides(A.sub) : (body().innerHTML = errBox('The burr guides page did not load.'));
     return V[A.view]();
   }
   function shell() {
+    document.body.classList.toggle('embedded', EMBEDDED);
     app().innerHTML = `<div class="top"><div class="brand">Zerno Builder</div><nav id="nav" aria-label="Zerno Builder">${NAV.map(([k, n]) => `<button data-v="${k}">${n}</button>`).join('')}</nav></div><div id="body"></div>`;
     $$('#nav button').forEach((b) => { b.onclick = () => go(b.dataset.v); });
   }
   const head = (title, sub = '', actions = '') => `<div class="ph"><h1>${title}</h1>${actions}</div>${sub ? `<p class="lede">${sub}</p>` : ''}`;
 
   /* ---------- Home ---------- */
+  const API_KEY = (document.querySelector('meta[name="shopify-api-key"]') || {}).content || '';
+  const editorLink = (template, block, target) => `shopify://admin/themes/current/editor?template=${template}${block ? `&addAppBlockId=${API_KEY}/${block}&target=${target}` : ''}`;
+  /* Which of the app's blocks the live theme uses (needs read_themes). */
+  async function themeStatus() {
+    const d = await gql(`{ themes(first:1, roles:[MAIN]){ nodes { id name files(first:100, filenames:["templates/*.json"]){ nodes { filename body { ... on OnlineStoreThemeFileBodyText { content } } } } } } }`);
+    const t = d.themes.nodes[0]; if (!t) return null;
+    const files = (t.files && t.files.nodes) || [];
+    const uses = (re) => files.filter((f) => f.body && f.body.content && re.test(f.body.content)).map((f) => f.filename.replace(/^templates\//, '').replace(/\.json$/, ''));
+    return { name: t.name, builder: uses(/zerno-builder\/blocks\/(grinder|z1|z2)-builder/), guide: uses(/zerno-builder\/blocks\/burr-guide/) };
+  }
+  function hidden(k) { try { return localStorage.getItem('zba-hide-' + k) === '1'; } catch (e) { return false; } }
+  function hide(k) { try { localStorage.setItem('zba-hide-' + k, '1'); } catch (e) { /* private window */ } }
   async function showHome() {
+    titleBar('Zerno Builder');
     const cat = A.cat;
     let sets = [], prods = [], err = '';
     try { [sets, prods] = await Promise.all([loadSets(), productsByHandles([...cat.grinders.map((g) => g.product), ...cat.sizes.flatMap((s) => s.products || [])])]); } catch (e) { err = e.message; }
     A.sets = sets;
     const ph = (h) => prods.find((p) => p.handle === h);
     const steps = [
-      { done: A.catIsSaved, t: 'Save your catalog', d: A.catIsSaved ? 'Your grinders, burr sizes, burrs and accessories are saved in Shopify.' : 'The store uses the built-in catalog. Open Catalog and save it once to make it yours.', go: 'catalog' },
-      { done: cat.grinders.every((g) => ph(g.product)), t: 'Link each grinder to its product', d: 'Every grinder in the catalog needs its Shopify product.', go: 'products' },
-      { done: cat.grinders.every((g) => winner(g, sets, ph(g.product)).os), t: 'Give each grinder an active option set', d: 'Option sets control what each builder offers. Templates give you a head start.', go: 'sets' },
-      { done: cat.sizes.every((s) => (s.products || []).some((h) => ph(h))), t: 'Link each burr size to its burr product', d: 'The Burr Guide reads prices and stock from these products.', go: 'catalog/sizes' },
-      { done: cat.grinders.every((g) => g.art), t: 'Add layered art to each grinder', d: 'New grinders run in photo mode. The Art studio cuts out the grinder, accent piece and funnel cap so colors and woods show on the grinder.', go: 'catalog/grinders' }
+      { done: A.catIsSaved, t: 'Save your catalog', d: A.catIsSaved ? 'Your grinders, burr sizes, burrs and accessories are saved in Shopify.' : 'The store uses the built-in catalog. Open Catalog and save it once to make it yours.', go: 'catalog', b: 'Open Catalog' },
+      { done: cat.grinders.every((g) => ph(g.product)), t: 'Link each grinder to its product', d: 'Every grinder in the catalog needs its Shopify product.', go: 'products', b: 'Open Products' },
+      { done: cat.grinders.every((g) => winner(g, sets, ph(g.product)).os), t: 'Give each grinder an active option set', d: 'Option sets control what each builder offers. Templates give you a head start.', go: 'sets', b: 'Create option set' },
+      { done: cat.sizes.every((s) => (s.products || []).some((h) => ph(h))), t: 'Link each burr size to its burr product', d: 'The Burr Guide reads prices and stock from these products.', go: 'guides', b: 'Open Burr guides' },
+      { done: cat.grinders.every((g) => g.art), t: 'Make art for each grinder', d: 'New grinders show their product photo. The Art studio cuts out the grinder, accent piece and funnel cap so colors and woods show on the grinder.', go: 'products', b: 'Open Products' }
     ];
-    const n = steps.filter((s) => s.done).length;
-    body().innerHTML = head('Home', 'Set up and run the grinder builders and the Burr Guide.') + (err ? errBox(err) : '') + `
-      <div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Setup guide</h2><span class="badge ${n === steps.length ? 'on' : ''}">${n} of ${steps.length} done</span></div>
-        <div class="meter"><i style="width:${(n / steps.length) * 100}%"></i></div>
-        <ol class="checklist">${steps.map((s) => `<li class="${s.done ? 'done' : ''}"><span class="tick" aria-hidden="true">${s.done ? '&#10003;' : ''}</span><div><b>${esc(s.t)}</b><p>${esc(s.d)}</p></div><button class="btn sm" data-go="${s.go}">${s.done ? 'View' : 'Start'}</button></li>`).join('')}</ol></div>
-      <div class="stats">${[['Grinders', cat.grinders.length], ['Burr sizes', cat.sizes.length], ['Burrs', cat.burrs.filter((b) => !b.hidden).length], ['Accessories', cat.accessories.length], ['Active option sets', sets.filter((s) => s.active).length]].map(([k, v]) => `<div class="card stat"><span>${k}</span><b>${v}</b></div>`).join('')}</div>
-      <div class="card"><h2>Add to your theme</h2><p class="sub" style="margin:0">In the theme editor, open a grinder's product template and add the <b>Grinder Builder</b> app block. It finds the grinder from the product page. Add the <b>Burr Guide</b> block to any page. Changes you save here reach the store within about a minute.</p></div>`;
-    $$('[data-go]').forEach((b) => { b.onclick = () => { const [v, ...s] = b.dataset.go.split('/'); go(v, s.join('/')); }; });
+    const n = steps.filter((s) => s.done).length, first = steps.findIndex((s) => !s.done);
+    body().innerHTML = head('Home') + (err ? errBox(err) : '') + `<div class="narrow">
+      <div class="banner" id="tstat"><span class="spin"></span> Checking your live theme…</div>
+      ${hidden('guide') && n === steps.length ? '' : `<div class="card"><div class="cardrow"><div><h2>Setup guide</h2><p class="sub" style="margin:0">Get the builders ready by following these steps.</p></div><button class="ic" id="hideguide" aria-label="Hide the setup guide">&times;</button></div>
+        <div class="progress"><b>${n} / ${steps.length} completed</b><div class="meter"><i style="width:${(n / steps.length) * 100}%"></i></div></div>
+        <ol class="checklist">${steps.map((s, i) => `<li class="${s.done ? 'done' : ''}${i === first ? ' open' : ''}"><span class="tick" aria-hidden="true">${s.done ? '&#10003;' : ''}</span><div><b>${esc(s.t)}</b><p>${esc(s.d)}</p>${i === first ? `<button class="btn sm" data-go="${s.go}">${esc(s.b)}</button>` : ''}</div>${i === first ? '' : `<button class="btn plain sm" data-go="${s.go}">${s.done ? 'View' : 'Start'}</button>`}</li>`).join('')}</ol></div>`}
+      <div class="card"><h2>Sales from the builders</h2><p class="sub">Orders with a builder build or a Burr Guide pick.</p>
+        <select id="hdays" class="pill" aria-label="Date range">${[7, 30, 60].map((d) => `<option value="${d}">Last ${d} days</option>`).join('')}</select>
+        <div class="kpis" id="kpis"><span class="spin"></span></div></div>
+      <div class="card"><h2>Quick actions</h2><div class="qa">
+        ${[['sets/new', 'Create an option set', 'Pick a grinder and a template.'], ['products', 'Make grinder art', 'Cut out the grinder, accent and cap.'], ['guides', 'Add a burr', 'New variants show up, ready to add.'], ['products', 'Cut out a product photo', 'Burrs, accessories and in-the-box items.']]
+          .map(([to, t, d]) => `<button class="qcard" data-go="${to}"><b>${t}</b><span>${d}</span></button>`).join('')}</div></div>
+      <div class="card"><h2>Need help?</h2><p class="sub" style="margin:0">See how the catalog, option sets, templates and burr guides fit together in <a href="#" data-go="help">Help</a>.</p></div></div>`;
+    $$('[data-go]').forEach((b) => { b.onclick = (e) => { e.preventDefault(); const [v, ...s] = b.dataset.go.split('/'); go(v, s.join('/')); }; });
+    if ($('#hideguide')) $('#hideguide').onclick = () => { hide('guide'); $('#hideguide').closest('.card').remove(); };
+    const kpis = async () => {
+      const days = +$('#hdays').value, box = $('#kpis');
+      try {
+        const o = await loadOrders(days);
+        if (!$('#kpis')) return;
+        box.innerHTML = [['Sales from the app', money(o.reduce((t, x) => t + x.fromApp, 0))], ['Orders', o.length], ['Builds', o.reduce((t, x) => t + x.builds.length, 0)], ['Burr Guide orders', o.filter((x) => x.guide.length).length]]
+          .map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
+      } catch (e) { box.innerHTML = `<p class="muted">${/access|scope|permission|denied/i.test(e.message) ? 'Approve order access in the next deploy to see sales here.' : esc(e.message)}</p>`; }
+    };
+    $('#hdays').onchange = kpis; kpis();
+    themeStatus().then((t) => {
+      const el = $('#tstat'); if (!el) return;
+      if (!t) { el.remove(); return; }
+      const on = t.builder.length > 0;
+      el.className = 'banner ' + (on ? 'ok' : 'warn');
+      el.innerHTML = `<span class="dot"></span><span><b>${on ? 'Builder is live' : 'Builder is not on your live theme'}</b> ${on ? `on ${esc(t.builder.join(', '))}${t.guide.length ? `, Burr Guide on ${esc(t.guide.join(', '))}` : ''} in ${esc(t.name)}.` : `Add the Grinder Builder block to your grinder product template in ${esc(t.name)}.`}</span>
+        <a class="btn sm" href="${on ? editorLink('product') : editorLink('product', 'grinder-builder', 'mainSection')}" target="_top">${on ? 'Manage in theme editor' : 'Add it now'}</a>`;
+    }).catch(() => { const el = $('#tstat'); if (el) el.remove(); });
   }
-
   /* Which option set a grinder product uses: the highest priority active set that lists it (same rule as the storefront). */
   function winner(g, sets, product) {
     const pid = product && product.id;
@@ -263,25 +357,55 @@
     if (A.sub) { const s = A.sets.find((x) => num(x.id) === +A.sub); if (s) return editSet(s); }
     const prods = await productsByIds([...new Set(A.sets.flatMap((s) => s.products))]).catch(() => []);
     const pname = (gid) => (prods.find((p) => p.id === gid) || {}).title || 'Product';
-    body().innerHTML = head('Option sets', 'Each option set controls one grinder builder: the burrs, woods, caps and accessories it offers, their labels and rules. When two active sets list the same grinder, the higher priority wins.', '<button class="btn primary" id="new">Create option set</button>') + `
-      <div class="card flush"><table class="list"><thead><tr><th>Option set</th><th>Grinder</th><th>Products</th><th>Priority</th><th>Status</th><th>Updated</th><th></th></tr></thead><tbody>
-      ${A.sets.length ? A.sets.map((s) => `<tr class="clk" data-id="${esc(s.id)}"><td><b>${esc(s.title)}</b></td><td>${esc(grinderName(s.builder))}</td>
-        <td>${s.products.length ? s.products.map((g) => esc(pname(g))).join(', ') : '<span class="muted">None yet</span>'}</td><td>${s.priority}</td>
-        <td><label class="switch" data-stop><input type="checkbox" data-act="${esc(s.id)}" ${s.active ? 'checked' : ''}><span class="badge ${s.active ? 'on' : ''}">${s.active ? 'Active' : 'Draft'}</span></label></td>
-        <td>${s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : ''}</td><td data-stop><button class="btn sm" data-dup="${esc(s.id)}">Duplicate</button></td></tr>`).join('')
-        : '<tr><td colspan="7" class="empty">No option sets yet. Create one for each grinder. Until then each builder uses its block settings and the catalog.</td></tr>'}
-      </tbody></table></div>`;
+    const acts = [['export', 'Export'], ['import', 'Import'], ['usetpl', 'Use a template'], ['new', 'Create option set', true]];
+    titleBar('Option sets', acts.map(([id, label, primary]) => ({ label, primary, onClick: () => $('#' + id).click() })));
+    body().innerHTML = head('Option sets', 'Each option set runs one grinder builder: the burrs, woods, caps and accessories it offers, their labels and rules. When two active sets list the same grinder, the higher priority wins.',
+      `<span class="acts">${acts.map(([id, label, primary]) => `<button class="btn${primary ? ' primary' : ''}" id="${id}">${label}</button>`).join('')}</span><input type="file" id="importf" accept="application/json,.json" hidden>`) + `
+      <div class="card flush"><div class="toolbar"><select id="sf" aria-label="Status"><option value="">All</option><option value="on">Active</option><option value="off">Draft</option></select>
+        <input type="search" id="sq" placeholder="Filter option sets" aria-label="Filter option sets"></div>
+      <div class="scroll"><table class="list"><thead><tr><th class="num">#</th><th>Option set</th><th>Status</th><th>Grinder</th><th>Products</th><th>Priority</th><th>Updated</th><th class="right">Actions</th></tr></thead><tbody id="srows"></tbody></table></div></div>`;
+    const rows = () => {
+      const q = $('#sq').value.trim().toLowerCase(), f = $('#sf').value;
+      const list = A.sets.filter((s) => (!f || (f === 'on') === s.active) && (!q || `${s.title} ${grinderName(s.builder)}`.toLowerCase().includes(q)));
+      $('#srows').innerHTML = list.length ? list.map((s, i) => `<tr class="clk" data-id="${esc(s.id)}"><td class="num muted">${i + 1}</td><td><b>${esc(s.title)}</b></td>
+        <td><label class="switch" data-stop><input type="checkbox" data-act="${esc(s.id)}" ${s.active ? 'checked' : ''} aria-label="Active"><span class="badge ${s.active ? 'on' : ''}">${s.active ? 'Active' : 'Draft'}</span></label></td>
+        <td>${esc(grinderName(s.builder))}</td><td>${s.products.length ? s.products.map((g) => esc(pname(g))).join(', ') : '<span class="muted">None yet</span>'}</td><td>${s.priority}</td>
+        <td>${s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : ''}</td><td class="right" data-stop><button class="btn sm" data-dup="${esc(s.id)}">Duplicate</button> <button class="btn sm danger" data-del="${esc(s.id)}" aria-label="Delete ${esc(s.title)}">Delete</button></td></tr>`).join('')
+        : `<tr><td colspan="8" class="empty">${A.sets.length ? 'No option sets match.' : 'No option sets yet. Create one for each grinder. Until then each builder uses its block settings and the catalog.'}</td></tr>`;
+      $$('tr.clk').forEach((tr) => { tr.onclick = (e) => { if (e.target.closest('[data-stop]')) return; go('sets', String(num(tr.dataset.id))); }; });
+      $$('[data-dup]').forEach((b) => { b.onclick = async () => { const s = clone(A.sets.find((x) => x.id === b.dataset.dup)); Object.assign(s, { id: null, title: s.title + ' copy', active: false, handle: slug(s.title) }); await editSet(s); markDirty(); }; });
+      $$('[data-del]').forEach((b) => { b.onclick = async () => { const s = A.sets.find((x) => x.id === b.dataset.del); if (!confirm(`Delete ${s.title}? The builder falls back to the next active set, then its block settings.`)) return; try { userErr((await gql(`mutation D($id:ID!){ metaobjectDelete(id:$id){ userErrors { message } } }`, { id: s.id })).metaobjectDelete); toast('Option set deleted'); showSets(); } catch (e) { toast(e.message, true); } }; });
+      $$('[data-act]').forEach((c) => {
+        c.onchange = async () => {
+          try {
+            userErr((await gql(`mutation U($id:ID!,$f:[MetaobjectFieldInput!]!){ metaobjectUpdate(id:$id, metaobject:{fields:$f}){ userErrors { message } } }`, { id: c.dataset.act, f: [{ key: 'active', value: String(c.checked) }] })).metaobjectUpdate);
+            toast(c.checked ? 'Option set is live' : 'Option set is now a draft'); showSets();
+          } catch (e) { toast(e.message, true); c.checked = !c.checked; }
+        };
+      });
+    };
+    $('#sq').oninput = rows; $('#sf').onchange = rows; rows();
     $('#new').onclick = () => go('sets', 'new');
-    $$('tr.clk').forEach((tr) => { tr.onclick = (e) => { if (e.target.closest('[data-stop]')) return; go('sets', String(num(tr.dataset.id))); }; });
-    $$('[data-dup]').forEach((b) => { b.onclick = async () => { const s = clone(A.sets.find((x) => x.id === b.dataset.dup)); Object.assign(s, { id: null, title: s.title + ' copy', active: false, handle: slug(s.title) }); await editSet(s); markDirty(); }; });
-    $$('[data-act]').forEach((c) => {
-      c.onchange = async () => {
-        try {
-          userErr((await gql(`mutation U($id:ID!,$f:[MetaobjectFieldInput!]!){ metaobjectUpdate(id:$id, metaobject:{fields:$f}){ userErrors { message } } }`, { id: c.dataset.act, f: [{ key: 'active', value: String(c.checked) }] })).metaobjectUpdate);
-          toast(c.checked ? 'Option set is live' : 'Option set is now a draft'); showSets();
-        } catch (e) { toast(e.message, true); c.checked = !c.checked; }
-      };
-    });
+    $('#usetpl').onclick = () => go('templates');
+    $('#export').onclick = () => download(`zerno-option-sets-${new Date().toISOString().slice(0, 10)}.json`, { kind: 'zerno-option-sets', version: 1, sets: A.sets.map(({ id, updatedAt, ...s }) => s) });
+    $('#import').onclick = () => $('#importf').click();
+    $('#importf').onchange = async (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      try {
+        const j = JSON.parse(await file.text()), list = j.sets || (j.kind === 'zerno-backup' ? j.sets : null);
+        if (!Array.isArray(list)) throw new Error('This file is not an option set export.');
+        for (const s of list) await createSetRecord({ ...s, active: false });
+        toast(`${list.length} option set${list.length === 1 ? '' : 's'} imported as drafts`); showSets();
+      } catch (err) { toast('Not imported: ' + err.message, true); }
+    };
+  }
+  async function createSetRecord(s) {
+    return userErr((await gql(`mutation C($m:MetaobjectCreateInput!){ metaobjectCreate(metaobject:$m){ metaobject { id handle } userErrors { message } } }`,
+      { m: { type: '$app:option_set', handle: `${slug(s.handle || s.title)}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, fields: fieldsOf(s) } })).metaobjectCreate);
+  }
+  function download(name, data) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
   }
   const BUILTIN_TEMPLATES = [
     { id: 'full', title: 'Full grinder builder', desc: 'Color, burrs, accent piece, funnel cap and accessories. The Z1 and Z2 layout.', roles: ['burrs', 'accents', 'caps', 'accessories'], config: {} },
@@ -397,6 +521,7 @@
           <div class="field"><label for="heading">Builder heading</label><input type="text" id="heading" value="${esc(s.config.heading || '')}"></div>
           <div class="flow" id="flow"></div></div>
       </div><div class="sticky"><div class="pv"><div class="pvh"><b>Live preview</b><span class="muted" style="font-size:12px">The real builder with these settings. Saving publishes them.</span></div><div class="pvb" id="preview"></div></div></div></div>`;
+    titleBar(s.title || 'Option set', [{ label: 'Save', primary: true, onClick: save }]);
     $('#back').onclick = () => go('sets');
     $('#title').oninput = (e) => { s.title = e.target.value; markDirty(); };
     $('#heading').oninput = (e) => { s.config.heading = e.target.value; markDirty(); };
@@ -568,49 +693,106 @@
   }
   async function saveAsTemplate() {
     const title = prompt('Template name', A.set.title.replace(/\s*options? set$/i, '') + ' layout');
-    if (!title) return;
-    const roles = Object.keys(FIELD).filter((k) => (A.set.lists[k] || []).length);
-    const { items, ...config } = A.set.config;
-    try {
-      userErr((await gql(`mutation C($m:MetaobjectCreateInput!){ metaobjectCreate(metaobject:$m){ metaobject { id } userErrors { message } } }`,
-        { m: { type: '$app:template', handle: `${slug(title)}-${Date.now().toString(36)}`, fields: [{ key: 'title', value: title }, { key: 'data', value: JSON.stringify({ desc: `Saved from ${A.set.title}`, roles, config }) }] } })).metaobjectCreate);
-      toast('Template saved');
-    } catch (e) { toast('Not saved: ' + e.message, true); }
+    if (title) await saveTemplate(title, A.set);
   }
 
   /* ---------- Templates ---------- */
   async function showTemplates() {
     const tpls = await allTemplates();
+    const mine = tpls.filter((t) => t.saved), tab = A.sub === 'yours' ? 'yours' : 'built';
     const roleName = { burrs: 'Burrs', accents: 'Accent pieces', caps: 'Funnel caps', accessories: 'Accessories' };
-    body().innerHTML = head('Templates', 'Start an option set from a ready-made layout, or save your own from any option set with "Save as template".') + `
-      <div class="tpls">${tpls.map((t) => `<div class="card tplc"><div><span class="badge ${t.saved ? '' : 'req'}">${t.saved ? 'Yours' : 'Built in'}</span><h2>${esc(t.title)}</h2><p class="sub">${esc(t.desc || '')}</p>
-        <p class="steps">Color${(t.roles || []).map((r) => ' · ' + roleName[r]).join('')}</p></div>
-        <div style="display:flex;gap:8px"><button class="btn primary sm" data-use="${esc(t.saved ? num(t.id) : t.id)}">Use template</button>${t.saved ? `<button class="btn sm danger" data-rmt="${esc(t.id)}">Delete</button>` : ''}</div></div>`).join('')}</div>`;
+    const art = { full: 'preview/z2-jet-black.jpg', 'no-accents': 'preview/z1-jet-black.jpg', 'burrs-only': 'preview/burr-core-blind.png' };
+    titleBar('Templates', [{ label: 'Create template', primary: true, onClick: () => $('#newtpl').click() }]);
+    body().innerHTML = head('Templates', 'Start an option set from a ready-made layout, or save your own from any option set.', '<button class="btn primary" id="newtpl">Create template</button>') + `
+      <div class="seg" role="tablist"><button role="tab" data-tt="built" aria-selected="${tab === 'built'}">Built in <span class="cnt">${tpls.length - mine.length}</span></button><button role="tab" data-tt="yours" aria-selected="${tab === 'yours'}">Yours <span class="cnt">${mine.length}</span></button></div>
+      <div class="tpls">${(tab === 'yours' ? mine : tpls.filter((t) => !t.saved)).map((t) => `<div class="card tplc"><div class="tplimg">${art[t.id] ? `<img src="${art[t.id]}" alt="">` : `<span>${esc((t.title || 'T')[0])}</span>`}</div>
+        <div class="tplbody"><b>${esc(t.title)}</b><p class="sub">${esc(t.desc || '')}</p><p class="steps">Color${(t.roles || []).map((r) => ' · ' + roleName[r]).join('')}</p>
+        <div class="btnrow"><button class="btn sm primary" data-use="${esc(t.saved ? num(t.id) : t.id)}">+ Use template</button>${t.saved ? `<button class="btn sm danger" data-rmt="${esc(t.id)}">Delete</button>` : ''}</div></div></div>`).join('')
+        || '<div class="card empty">No templates of your own yet. Use Create template, or Save as template on any option set.</div>'}</div>`;
+    $$('[data-tt]').forEach((b) => { b.onclick = () => { setUrl('templates', b.dataset.tt === 'yours' ? 'yours' : ''); showTemplates(); }; });
     $$('[data-use]').forEach((b) => { b.onclick = () => go('sets', 'new?template=' + b.dataset.use); });
     $$('[data-rmt]').forEach((b) => { b.onclick = async () => { if (!confirm('Delete this template? Option sets made from it stay as they are.')) return; try { userErr((await gql(`mutation D($id:ID!){ metaobjectDelete(id:$id){ userErrors { message } } }`, { id: b.dataset.rmt })).metaobjectDelete); toast('Template deleted'); showTemplates(); } catch (e) { toast(e.message, true); } }; });
+    $('#newtpl').onclick = async () => {
+      let sets = []; try { sets = await loadSets(); } catch (e) { /* none */ }
+      if (!sets.length) return toast('Create an option set first, then save it as a template.', true);
+      const pickId = await choose('Create a template from an option set', sets.map((s) => [s.id, s.title, grinderName(s.builder)]));
+      if (!pickId) return;
+      const s = sets.find((x) => x.id === pickId), title = prompt('Template name', s.title.replace(/\s*options? set$/i, '') + ' layout');
+      if (!title) return;
+      await saveTemplate(title, s); setUrl('templates', 'yours'); showTemplates();
+    };
+  }
+  /* a small list dialog: resolves to the chosen key, or null */
+  function choose(title, items) {
+    return new Promise((resolve) => {
+      const ov = document.createElement('div'); ov.className = 'modal-ov';
+      ov.innerHTML = `<div class="modal sm" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="mh"><b>${esc(title)}</b><button class="ic" data-x aria-label="Close">&times;</button></div>
+        <div class="mb"><div class="choices">${items.map(([k, t, d]) => `<button class="choice" data-k="${esc(k)}"><b>${esc(t)}</b>${d ? `<span>${esc(d)}</span>` : ''}</button>`).join('')}</div></div></div>`;
+      document.body.appendChild(ov);
+      const done = (v) => { ov.remove(); resolve(v); };
+      $$('[data-x]', ov).forEach((b) => { b.onclick = () => done(null); });
+      ov.onclick = (e) => { if (e.target === ov) done(null); };
+      $$('[data-k]', ov).forEach((b) => { b.onclick = () => done(b.dataset.k); });
+    });
+  }
+  async function saveTemplate(title, set) {
+    const roles = Object.keys(FIELD).filter((k) => (set.lists[k] || []).length);
+    const { items, ...config } = set.config;
+    try {
+      userErr((await gql(`mutation C($m:MetaobjectCreateInput!){ metaobjectCreate(metaobject:$m){ metaobject { id } userErrors { message } } }`,
+        { m: { type: '$app:template', handle: `${slug(title)}-${Date.now().toString(36)}`, fields: [{ key: 'title', value: title }, { key: 'data', value: JSON.stringify({ desc: `Saved from ${set.title}`, roles, config }) }] } })).metaobjectCreate);
+      toast('Template saved');
+    } catch (e) { toast('Not saved: ' + e.message, true); }
   }
 
-  /* ---------- Products ---------- */
-  async function showProducts() {
-    const cat = A.cat;
-    let sets, prods;
-    try { [sets, prods] = await Promise.all([loadSets(), productsByHandles([...cat.grinders.map((g) => g.product), ...cat.sizes.flatMap((s) => s.products || []), ...cat.accessories.map((a) => a.product)])]); } catch (e) { body().innerHTML = errBox(e); return; }
-    const ph = (h) => prods.find((p) => p.handle === h);
-    const artOf = (g) => (!g.art ? '<span class="badge">Photo mode</span>' : `<span class="badge on">Layered art</span>`);
-    body().innerHTML = head('Products', 'Every product the builders and the Burr Guide use, and which option set each grinder gets. Like Globo, it shows why the other option sets were skipped.') + `
-      <div class="card flush"><table class="list"><thead><tr><th>Grinder</th><th>Product</th><th>Burr size</th><th>Art</th><th>Option set in use</th><th>Skipped</th></tr></thead><tbody>
-      ${cat.grinders.map((g) => { const p = ph(g.product), w = winner(g, sets, p); return `<tr><td><b>${esc(g.name)}</b><div class="muted">${esc(g.key)}</div></td>
-        <td>${p ? `<span class="pcell">${pimg(p) ? `<img src="${esc(pimg(p))}" alt="">` : ''}<span>${esc(p.title)}<br><span class="muted">${esc(p.handle)}${p.templateSuffix ? ' · template ' + esc(p.templateSuffix) : ''}</span></span></span>` : `<span class="badge warn">Not found: ${esc(g.product)}</span>`}</td>
-        <td>${esc(g.size)}</td><td>${artOf(g)}</td>
-        <td>${w.os ? `<a href="#/sets/${num(w.os.id)}">${esc(w.os.title)}</a>` : `<span class="muted">${p ? 'No active option set lists this product. The builder uses its block settings and the catalog.' : 'Link the product first.'}</span>`}</td>
-        <td>${w.skipped.length ? w.skipped.map((x) => `<div><a href="#/sets/${num(x.s.id)}">${esc(x.s.title)}</a> <span class="muted">${esc(x.why)}</span></div>`).join('') : '<span class="muted">None</span>'}</td></tr>`; }).join('')}
-      </tbody></table></div>
-      <div class="card flush"><table class="list"><thead><tr><th>Burr size</th><th>Burr products</th><th>Burrs in the catalog</th><th>Matched to a variant</th></tr></thead><tbody>
-      ${cat.sizes.map((s) => { const ps = (s.products || []).map(ph).filter(Boolean), vs = ps.flatMap((p) => p.variants.nodes.map(toVariant)); const bs = cat.burrs.filter((b) => b.size === s.key && !b.hidden); const matched = bs.filter((b) => vs.some((v) => Cat.burrFor({ burrs: [b] }, s.key, v))); return `<tr><td><b>${esc(s.name)}</b></td>
-        <td>${(s.products || []).map((h) => (ph(h) ? esc(ph(h).title) : `<span class="badge warn">Not found: ${esc(h)}</span>`)).join('<br>') || '<span class="muted">None</span>'}</td><td>${bs.length}</td>
-        <td>${matched.length === bs.length ? `<span class="badge on">All ${bs.length}</span>` : `<span class="badge warn">${matched.length} of ${bs.length}</span> <span class="muted">${esc(bs.filter((b) => !matched.includes(b)).map((b) => b.name).join(', '))}</span>`}</td></tr>`; }).join('')}
-      </tbody></table></div>`;
-    $$('a[href^="#/"]', body()).forEach((a) => { a.onclick = (e) => { e.preventDefault(); const [v, ...s] = a.getAttribute('href').slice(2).split('/'); go(v, s.join('/')); }; });
+  /* ---------- Settings: theme setup and backups ---------- */
+  async function showSettings() {
+    const tab = A.sub || 'theme';
+    titleBar('Settings');
+    body().innerHTML = head('Settings') + `<div class="narrow"><div class="seg" role="tablist">${[['theme', 'Theme setup'], ['backup', 'Backup']].map(([k, n]) => `<button role="tab" data-st="${k}" aria-selected="${tab === k}">${n}</button>`).join('')}</div><div id="stbody"></div></div>`;
+    $$('[data-st]').forEach((b) => { b.onclick = () => { setUrl('settings', b.dataset.st === 'theme' ? '' : b.dataset.st); showSettings(); }; });
+    const box = $('#stbody');
+    if (tab === 'backup') {
+      box.innerHTML = `<div class="card"><h2>Export everything</h2><p class="sub">One file with the catalog (grinders, burrs, art links, textures), every option set and your templates. Keep it as a backup, or load it into another store.</p><button class="btn primary" id="bexp">Download backup</button></div>
+        <div class="card"><h2>Restore from a backup</h2><p class="sub">Replaces the catalog and adds the option sets as drafts and the templates. Nothing is deleted.</p><button class="btn" id="bimp">Choose backup file</button><input type="file" id="bfile" accept="application/json,.json" hidden></div>`;
+      $('#bexp').onclick = async () => {
+        let sets = [], tpls = []; try { [sets, tpls] = await Promise.all([loadSets(), loadTemplates()]); } catch (e) { /* partial backup */ }
+        download(`zerno-builder-backup-${new Date().toISOString().slice(0, 10)}.json`, { kind: 'zerno-backup', version: 1, catalog: A.catSaved || A.cat, sets: sets.map(({ id, updatedAt, ...s }) => s), templates: tpls.map(({ id, saved, ...t }) => t) });
+      };
+      $('#bimp').onclick = () => $('#bfile').click();
+      $('#bfile').onchange = async (e) => {
+        const file = e.target.files[0]; if (!file) return;
+        try {
+          const j = JSON.parse(await file.text());
+          if (j.kind !== 'zerno-backup') throw new Error('This file is not a Zerno Builder backup.');
+          if (!confirm(`Restore this backup? It replaces the catalog and adds ${(j.sets || []).length} option sets as drafts.`)) return;
+          if (j.catalog) { await saveCatalog(j.catalog); A.cat = Cat.get(j.catalog); A.catSaved = clone(A.cat); A.catIsSaved = true; }
+          for (const s of j.sets || []) await createSetRecord({ ...s, active: false });
+          for (const t of j.templates || []) userErr((await gql(`mutation C($m:MetaobjectCreateInput!){ metaobjectCreate(metaobject:$m){ metaobject { id } userErrors { message } } }`, { m: { type: '$app:template', handle: `${slug(t.title)}-${Date.now().toString(36)}`, fields: [{ key: 'title', value: t.title }, { key: 'data', value: JSON.stringify({ desc: t.desc, roles: t.roles, config: t.config }) }] } })).metaobjectCreate);
+          toast('Backup restored');
+        } catch (err) { toast('Not restored: ' + err.message, true); }
+      };
+      return;
+    }
+    box.innerHTML = `<div class="card"><h2>Blocks on your live theme</h2><div id="tblocks"><span class="spin"></span></div></div>
+      <div class="card"><h2>Add the blocks</h2><p class="sub">Each button opens the theme editor with the block ready to place. Click Save in the theme editor when it looks right.</p>
+        <div class="setuprow"><div><b>Grinder Builder</b><p class="sub">Add it to the product template your grinders use. It finds the grinder from the product page.</p></div><a class="btn" href="${editorLink('product', 'grinder-builder', 'mainSection')}" target="_top">Add to product template</a></div>
+        <div class="setuprow"><div><b>Burr Guide</b><p class="sub">Add it to a page, such as your burr guide page.</p></div><a class="btn" href="${editorLink('page', 'burr-guide', 'newAppsSection')}" target="_top">Add to a page</a></div>
+        <div class="setuprow"><div><b>Theme editor</b><p class="sub">Change colors, width and the text on each block.</p></div><a class="btn" href="${editorLink('product')}" target="_top">Open theme editor</a></div></div>`;
+    themeStatus().then((t) => {
+      const el = $('#tblocks'); if (!el) return;
+      el.innerHTML = !t ? '<p class="muted">No published theme found.</p>' : `<p class="sub">${esc(t.name)}</p><table class="vals"><tbody>
+        <tr><td><b>Grinder Builder</b></td><td>${t.builder.length ? `<span class="badge on">On ${esc(t.builder.join(', '))}</span>` : '<span class="badge warn">Not added</span>'}</td></tr>
+        <tr><td><b>Burr Guide</b></td><td>${t.guide.length ? `<span class="badge on">On ${esc(t.guide.join(', '))}</span>` : '<span class="badge">Not added</span>'}</td></tr></tbody></table>`;
+    }).catch((e) => { const el = $('#tblocks'); if (el) el.innerHTML = /access|scope|permission|denied/i.test(e.message) ? '<p class="muted">Approve theme access in the next deploy to see this.</p>' : errBox(e); });
+  }
+
+  /* App Bridge title bar: the page title and its buttons in the Shopify admin header, like other apps. */
+  function titleBar(title, buttons = []) {
+    const tb = document.querySelector('ui-title-bar'); if (!tb) return;
+    tb.setAttribute('title', title);
+    tb.innerHTML = '';
+    buttons.forEach((b) => { const el = document.createElement('button'); if (b.primary) el.setAttribute('variant', 'primary'); el.textContent = b.label; el.addEventListener('click', b.onClick); tb.appendChild(el); });
   }
 
   /* ---------- Orders ---------- */
@@ -668,7 +850,7 @@
     body().innerHTML = head('Help') + `<div class="card help-doc">
       <h2>How it fits together</h2>
       <p><b>Catalog</b> lists every grinder, burr size, burr and accessory. A new grinder, burr size or burr is a catalog entry, not code. A new grinder works right away in photo mode, using its product photo. Open its <b>Art studio</b> to cut out the grinder, accent piece and funnel cap from your photos, and the builder recolors and changes woods on it.</p>
-      <p><b>Option sets</b> work like Globo. Each builder uses the highest priority active option set that lists its product: the values it offers, their order, labels, help text and badges, the rules and the text on each step. Without one, a builder uses its block settings and the catalog.</p>
+      <p><b>Option sets</b> decide what each builder offers. Each builder uses the highest priority active option set that lists its product: the values it offers, their order, labels, help text and badges, the rules and the text on each step. Without one, a builder uses its block settings and the catalog.</p>
       <p><b>Templates</b> are starting layouts for option sets. Save any option set as a template to reuse it for the next grinder.</p>
       <p><b>Burr guides</b> are one per burr size. Fit scores and copy decide how the Burr Guide ranks burrs on the Burr Guide page and in "Help me choose" in every builder.</p>
       <p><b>Prices</b> are the Shopify variant prices. Changing a price in an option set changes the variant everywhere it is sold.</p>
@@ -685,5 +867,5 @@
     shell(); route();
   });
   window.ZBA = A;
-  window.ZBAdmin = { A, $, $$, esc, num, cents, money, slug, clone, same, toast, gql, userErr, field, parse, inp, chk, spin, errBox, head, go, setUrl, markDirty, clean, body, pimg, toVariant, productsByHandles, variantsByIds, loadCatalog, saveCatalog, uploadImage, deepMerge, shortName };
+  window.ZBAdmin = { A, $, $$, esc, num, cents, money, slug, clone, same, toast, gql, userErr, field, parse, inp, chk, spin, errBox, head, go, setUrl, titleBar, choose, winner, loadSets, markDirty, clean, body, pimg, toVariant, productsByHandles, variantsByIds, loadCatalog, saveCatalog, uploadImage, pickFile, deepMerge, shortName };
 })();

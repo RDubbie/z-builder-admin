@@ -42,7 +42,8 @@
       const cat = Cat.get(opts.catalog);
       const D = cat.guide;
       this.METHODS = D.METHODS; this.PROFILES = D.PROFILES; this.ROASTS = D.ROASTS; this.TOGS = D.TOGS;
-      this.money = opts.money || ((c) => '$' + Math.round(c / 100).toLocaleString('en-US'));
+      const fmt = opts.money || ((c) => '$' + Math.round(c / 100).toLocaleString('en-US'));
+      this.money = (c) => (c == null || isNaN(c) ? '' : fmt(c));   // no price when Shopify has none for the burr
       // one entry per grinder; grinders that share a burr size share its burrs. Only burrs Shopify sells are shown.
       this.G = Cat.guideGrinders(cat, { only: opts.fixed || null, size: opts.size || 'all', shop: opts.shop || null, base: Cat.assetBase(opts.assetBase) });
       Object.keys(this.G).forEach((k) => { if (!this.G[k].burrs.length) delete this.G[k]; });
