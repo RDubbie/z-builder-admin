@@ -210,7 +210,8 @@
   const isView = (v) => NAV.some(([k]) => k === v);
   const SHARED = ['catalog', 'guides'];                          // pages that edit the same working catalog
   function viewOf(u) {
-    const p = u.pathname.startsWith(ROOT) ? u.pathname.slice(ROOT.length).split('/')[0] : '';
+    // the page folder: the path segment after the app's folder (any app folder, so absolute sidebar links work in tests too)
+    const p = u.pathname.startsWith(ROOT) ? u.pathname.slice(ROOT.length).split('/')[0] : u.pathname.split('/').filter(Boolean).reverse().find(isView) || '';
     const [hv, ...rest] = u.hash.replace(/^#\/?/, '').split('/');
     const q = u.searchParams.get('view');
     const view = isView(p) ? p : isView(hv) ? hv : isView(q) ? q : 'home';
