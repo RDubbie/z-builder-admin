@@ -346,9 +346,9 @@
         <div class="card"><h2>Grinders on ${esc(size.name)} burrs</h2>${gs.length ? gs.map((g) => `<div class="field"><label for="gd-${esc(g.key)}">${esc(g.name)}: line under its card</label><input type="text" id="gd-${esc(g.key)}" data-gd="${esc(g.key)}" value="${esc((g.guide || {}).desc || '')}"></div>`).join('') : '<p class="muted">No grinder uses this size yet, so its guide does not show on the store. Set a grinder\'s burr size in Catalog > Grinders.</p>'}</div>
         <div class="card"><h2>Burr products</h2><p class="sub">Prices and stock come from ${(size.products || []).length ? esc(size.products.join(', ')) : 'no product yet'}. A new variant on ${(size.products || []).length > 1 ? 'these products' : 'this product'} shows up below, ready to add.</p><button class="btn sm" id="sizeedit">Edit ${esc(size.name)} burr size</button><div id="newvars"><span class="spin"></span></div></div>
       </div>
-      <div class="card flush"><div class="cardhead"><div><h2>Burrs and fit scores</h2><p class="sub" style="margin:0">Scores run 0 to 3. Click a burr to edit its photo and copy.</p></div><button class="btn primary sm" id="addburr">Add burr</button></div><div class="scroll"><table class="list mat"><thead><tr><th>Burr</th>${COLS.map(([, n]) => `<th>${n}</th>`).join('')}<th>Show</th></tr></thead><tbody>
-      ${bs.map((b) => `<tr data-b="${esc(b.key)}" class="${b.hidden ? 'hid' : ''}"><td><a class="bname" href="#" data-ed="${esc(b.key)}">${img(b.image)}<span>${esc(b.name)}</span></a></td>${COLS.map(([p]) => `<td><input type="number" step="0.5" min="-4" max="3" data-sc="${p}" value="${getP(b, p) ?? ''}" aria-label="${esc(b.name)} ${p}"></td>`).join('')}
-        <td><label class="switch"><input type="checkbox" data-hid ${b.hidden ? '' : 'checked'} aria-label="Show ${esc(b.name)}"></label></td></tr>`).join('') || `<tr><td colspan="${COLS.length + 2}" class="empty">No burrs in this size yet. Add one, or add a variant to the burr product in Shopify.</td></tr>`}
+      <div class="card flush"><div class="cardhead"><div><h2>Burrs and fit scores</h2><p class="sub" style="margin:0">Scores run 0 to 3. Drag the handle to set the order from more clarity to more texture. Click a burr to edit its photo and copy.</p></div><button class="btn primary sm" id="addburr">Add burr</button></div><div class="scroll"><table class="list mat"><thead><tr><th class="drag" aria-label="Order"></th><th>Burr</th>${COLS.map(([, n]) => `<th>${n}</th>`).join('')}<th>Show</th></tr></thead><tbody>
+      ${bs.map((b) => `<tr data-b="${esc(b.key)}" class="${b.hidden ? 'hid' : ''}"><td class="drag"><button type="button" class="handle" data-drag aria-label="Drag ${esc(b.name)} to reorder" title="Drag to reorder">&#8942;&#8942;</button></td><td><a class="bname" href="#" data-ed="${esc(b.key)}">${img(b.image)}<span>${esc(b.name)}</span></a></td>${COLS.map(([p]) => `<td><input type="number" step="0.5" min="-4" max="3" data-sc="${p}" value="${getP(b, p) ?? ''}" aria-label="${esc(b.name)} ${p}"></td>`).join('')}
+        <td><label class="switch"><input type="checkbox" data-hid ${b.hidden ? '' : 'checked'} aria-label="Show ${esc(b.name)}"></label></td></tr>`).join('') || `<tr><td colspan="${COLS.length + 3}" class="empty">No burrs in this size yet. Add one, or add a variant to the burr product in Shopify.</td></tr>`}
       </tbody></table></div></div>
       <div class="pv"><div class="pvh"><b>Live preview</b><span><button class="btn sm" id="gpv">Refresh preview</button></span></div><div class="pvb guidepv" id="gprev"></div></div>` : '<div class="card empty">No burr sizes yet. Add one with + Burr size.</div>'}`;
     $('#gsave').onclick = async () => { await saveCat(); showGuides(sz); };
@@ -366,6 +366,40 @@
       const b = newBurr(C, sz, name, null); Z.markDirty(); Z.go('catalog', `burrs/${sz}/${b.key}`);
     };
     $$('[data-gd]').forEach((el) => { el.oninput = () => { const g = C.grinders.find((x) => x.key === el.dataset.gd); g.guide = { ...(g.guide || {}), desc: el.value }; Z.markDirty(); }; });
+    // drag a row's handle to move the burr along the clarity to texture strip (the order of this size's burrs in the catalog)
+    const tbody = $('table.mat tbody');
+    $$('[data-drag]', tbody).forEach((h) => {
+      h.onpointerdown = (e) => {
+        e.preventDefault();
+        const row = h.closest('tr'), others = $$('tr[data-b]', tbody).filter((r) => r !== row);
+        row.classList.add('dragging');
+        let at = others.length;
+        // a line shows where the burr will land; the rows move only on release, so the drag never loses the pointer
+        const mark = () => others.forEach((r, i) => { r.classList.toggle('drop-before', i === at); r.classList.toggle('drop-after', at === others.length && i === others.length - 1); });
+        const move = (m) => { at = others.filter((r) => { const rc = r.getBoundingClientRect(); return rc.top + rc.height / 2 < m.clientY; }).length; mark(); };
+        const up = () => {
+          window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+          row.classList.remove('dragging'); others.forEach((r) => r.classList.remove('drop-before', 'drop-after'));
+          const keys = others.map((r) => r.dataset.b); keys.splice(at, 0, row.dataset.b);
+          const order = keys.map((k) => bs.find((x) => x.key === k));
+          if (order.every((x, i) => x === bs[i])) return;
+          let i = 0; C.burrs = C.burrs.map((x) => (x.size === sz ? order[i++] : x));
+          Z.markDirty(); showGuides(sz);
+        };
+        move(e);
+        window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+      };
+      // keyboard: arrow keys move the focused burr up or down
+      h.onkeydown = (e) => {
+        if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+        e.preventDefault();
+        const k = h.closest('tr').dataset.b, idx = bs.findIndex((b) => b.key === k), to = idx + (e.key === 'ArrowUp' ? -1 : 1);
+        if (to < 0 || to >= bs.length) return;
+        const order = bs.slice(); [order[idx], order[to]] = [order[to], order[idx]];
+        let i = 0; C.burrs = C.burrs.map((b) => (b.size === sz ? order[i++] : b));
+        Z.markDirty(); showGuides(sz); const nh = $(`tr[data-b="${k}"] [data-drag]`); if (nh) nh.focus();
+      };
+    });
     $$('tr[data-b]').forEach((tr) => {
       const b = bs.find((x) => x.key === tr.dataset.b);
       $$('[data-sc]', tr).forEach((el) => { el.oninput = () => { setP(b, el.dataset.sc, parseFloat(el.value) || 0); Z.markDirty(); }; });
@@ -572,43 +606,67 @@
     }
   }
 
-  /* How the grinder opens: angle and pivot, or slide distance and direction, with the real builder playing it. */
+  /* How the grinder opens: angle and pivot, or slide distance and direction, with the real builder playing it.
+     Also the accent piece's edge: how far it stands proud of the dial, and how dark its side is. */
   function hingeCard(side, g, p, vs) {
     if (!g.art || !g.geom) { side.innerHTML = '<div class="card"><h2>How it opens</h2><p class="sub">Make layered art first. Then set how the front opens here.</p></div>'; return; }
     const H = g.geom.hinge = g.geom.hinge || { mode: 'swing' };
+    const fins = Object.keys(g.geom).filter((k) => g.geom[k] && g.geom[k].knob);
     const slug0 = Object.keys(g.geom).find((k) => g.geom[k] && g.geom[k].face) || '';
-    const fc = slug0 ? g.geom[slug0].face : null;
-    const def = { angle: -25, dist: (slug0 && g.geom[slug0].open) || 8, dir: 177, ms: 1800, pivot: fc ? (H.mode === 'slide' ? [fc.c[0], fc.c[1]] : [fc.c[0], fc.c[1] + fc.h]) : [50, 50] };
+    const fc = slug0 ? g.geom[slug0].face : null, rim0 = (fins[0] && g.geom[fins[0]].knob.rim) || {};
+    const def = { angle: -25, dist: (slug0 && g.geom[slug0].open) || 8, dir: 177, ms: 1800, grow: 0, pivot: fc ? (H.mode === 'slide' ? [fc.c[0], fc.c[1]] : [fc.c[0], fc.c[1] + fc.h]) : [50, 50] };
     const val = (k) => (H[k] != null ? H[k] : def[k]);
-    const slider = (k, label, min, max, step, unit) => `<label class="field"><span class="lbl">${label} <b data-v="${k}">${val(k)}${unit}</b></span><input type="range" min="${min}" max="${max}" step="${step}" value="${val(k)}" data-h="${k}"></label>`;
+    const slider = (k, label, min, max, step, shown, attr = 'data-h', v = val(k)) => `<label class="field"><span class="lbl">${label} <b data-v="${k}">${shown}</b></span><input type="range" min="${min}" max="${max}" step="${step}" value="${v}" ${attr}="${k}"></label>`;
+    const secs = (ms) => (ms / 1000).toFixed(1) + ' s';
+    const capFront = H.funnel ? H.funnel === 'front' : H.mode !== 'slide';
     side.innerHTML = `<div class="card sticky"><div class="cardrow"><h2>How it opens</h2><button class="btn sm primary" id="play">Play</button></div>
       <div class="seg sm">${[['swing', 'Swings open'], ['slide', 'Slides out'], ['none', 'Stays shut']].map(([m, n]) => `<button data-mode="${m}" aria-pressed="${(H.mode || 'swing') === m}">${n}</button>`).join('')}</div>
       ${H.mode === 'none' ? '<p class="sub">The burr drops into the accent piece instead.</p>' : H.mode === 'slide'
-        ? slider('dist', 'Distance', 2, 45, 0.5, '%') + slider('dir', 'Direction', 0, 360, 1, '&deg;')
-        : slider('angle', 'Angle', -60, 60, 1, '&deg;') + `<div class="row2">${[0, 1].map((i) => `<label class="field"><span class="lbl">Hinge ${i ? 'height' : 'across'} <b data-v="pivot${i}">${val('pivot')[i].toFixed(1)}%</b></span><input type="range" min="0" max="100" step="0.5" value="${val('pivot')[i]}" data-pv="${i}"></label>`).join('')}</div>`}
-      ${H.mode === 'none' ? '' : slider('ms', 'Speed', 600, 4000, 100, ' ms')}
+        ? slider('dist', 'Distance', 2, 45, 0.5, val('dist') + '%') + slider('dir', 'Direction', 0, 360, 1, val('dir') + '&deg;') + slider('grow', 'Comes toward you', 0, 0.08, 0.005, Math.round(val('grow') * 100) + '%')
+        : slider('angle', 'Angle', -60, 60, 1, val('angle') + '&deg;') + `<div class="row2">${[0, 1].map((i) => `<label class="field"><span class="lbl">Hinge ${i ? 'height' : 'across'} <b data-v="pivot${i}">${val('pivot')[i].toFixed(1)}%</b></span><input type="range" min="0" max="100" step="0.5" value="${val('pivot')[i]}" data-pv="${i}"></label>`).join('')}</div>`}
+      ${H.mode === 'none' ? '' : slider('speed', 'Speed <span class="muted">(slow to fast)</span>', 600, 4000, 100, secs(val('ms')), 'data-speed', 4600 - val('ms'))}
+      ${H.mode === 'none' ? '' : `<div class="field"><span class="lbl">Funnel and cap</span><div class="seg sm">${[['front', 'Come off with the front'], ['body', 'Stay on the body']].map(([k, n]) => `<button data-funnel="${k}" aria-pressed="${capFront === (k === 'front')}">${n}</button>`).join('')}</div></div>`}
       <div class="btnrow"><button class="btn sm" id="hreset">Reset</button><span class="muted" style="font-size:12px">Drag the hinge point in the Art studio for exact placement.</span></div>
+      <h3 class="h3">Accent piece edge</h3>
+      ${slider('rt', 'How far it stands out', 0, 15, 0.5, (rim0.t != null ? rim0.t * 100 : 7).toFixed(1) + '%', 'data-rim', rim0.t != null ? rim0.t * 100 : 7)}
+      ${slider('rs', 'Edge shade <span class="muted">(light to dark)</span>', 0, 70, 1, Math.round(rim0.shade != null ? rim0.shade * 100 : 30) + '%', 'data-rim', rim0.shade != null ? rim0.shade * 100 : 30)}
       <div class="pv hpv"><div class="pvb" id="hprev"></div></div></div>`;
-    // preview: the real builder on this grinder, with its burrs, so Play shows exactly what customers see
-    const box = $('#hprev');
-    const ci = Math.max(0, p.options.findIndex((o) => /colou?r|finish/i.test(o.name)));
+    // preview: the real builder on this grinder, with a burr and an accent piece, so Play shows exactly what customers see
     const C = { blockId: 'hinge', preview: true, grinderKey: g.key, catalog: A.cat, assetBase: 'preview/catalog.js', installedImage: null, included: [],
       settings: { heading: '', intro: '', includedNote: '', afterAdd: 'stay', accentCrop: 0.7, capCrop: 0.66, capOptional: true, finishText: '', finishSwatches: '', hideFinishes: '', hideBurrs: '', hideAccents: '', hideCaps: '', allowExtras: false, allowSpareBurrs: false, showIncluded: false, burrGuide: false },
       shop: { currency: 'USD', locale: 'en-US', cartAddUrl: '#', cartUrl: '#', rootUrl: '/' },
       grinder: { id: num(p.id), handle: p.handle, title: p.title, image: Z.pimg(p), options: p.options.map((o) => ({ name: o.name, values: o.values })), variants: vs.map((v) => ({ id: v.id, title: v.title, options: v.options, price: v.price, available: true, image: v.image })) },
       burrs: A.cat.burrs.filter((b) => b.size === g.size && !b.hidden).slice(0, 1).map((b, i) => ({ id: 900000 + i, title: b.name, short: b.short, price: 0, available: true, flat: null, flatAsset: b.image ? Cat.asset('preview/', b.image) : null, image: null })),
       accents: [], caps: [], accessories: [] };
-    void ci;
-    box.innerHTML = `<div class="zb" data-zb-root style="--zb-sticky:0px"><script type="application/json" data-zb-config>${JSON.stringify(C).replace(/</g, '\\u003c')}</script></div>`;
-    if (window.ZernoBuilderBoot) window.ZernoBuilderBoot(box);
-    const root = box.firstChild;
-    const play = () => { const zb = root._zb; if (!zb) return; zb.AG.hinge = clone(H); zb.demoOpen(); };
+    let root = null;
+    const build = () => {
+      const box = $('#hprev'); if (!box) return;
+      C.catalog = A.cat;
+      box.innerHTML = `<div class="zb" data-zb-root style="--zb-sticky:0px"><script type="application/json" data-zb-config>${JSON.stringify(C).replace(/</g, '\\u003c')}</script></div>`;
+      if (window.ZernoBuilderBoot) window.ZernoBuilderBoot(box);
+      root = box.firstChild;
+    };
+    build();
+    Z.productsByHandles(((g.handles || {}).accents || []).slice(0, 1)).then((ps) => {
+      const v = ps[0] && ps[0].variants.nodes.map(Z.toVariant)[0]; if (!v) return;
+      C.accents = [{ id: v.id, title: v.title, price: v.price, available: true, image: v.image }]; build();
+    }).catch(() => {});
+    const play = () => { const zb = root && root._zb; if (!zb) return; zb.AG.hinge = clone(H); zb.demoOpen(); };
     let t = null; const later = () => { clearTimeout(t); t = setTimeout(play, 350); };
+    let rt = null; const rebuild = () => { clearTimeout(rt); rt = setTimeout(build, 250); };
     $('#play').onclick = play;
     $$('[data-mode]', side).forEach((b) => { b.onclick = () => { H.mode = b.dataset.mode; Z.markDirty(); hingeCard(side, g, p, vs); later(); }; });
-    $$('[data-h]', side).forEach((el) => { el.oninput = () => { H[el.dataset.h] = +el.value; $(`[data-v="${el.dataset.h}"]`, side).innerHTML = el.value + (el.dataset.h === 'ms' ? ' ms' : el.dataset.h === 'dist' ? '%' : '&deg;'); Z.markDirty(); later(); }; });
+    $$('[data-funnel]', side).forEach((b) => { b.onclick = () => { H.funnel = b.dataset.funnel; Z.markDirty(); hingeCard(side, g, p, vs); later(); }; });
+    $$('[data-h]', side).forEach((el) => { el.oninput = () => { const k = el.dataset.h; H[k] = +el.value; $(`[data-v="${k}"]`, side).innerHTML = k === 'grow' ? Math.round(+el.value * 100) + '%' : el.value + (k === 'dist' ? '%' : '&deg;'); Z.markDirty(); later(); }; });
+    $$('[data-speed]', side).forEach((el) => { el.oninput = () => { H.ms = 4600 - +el.value; $('[data-v="speed"]', side).textContent = secs(H.ms); Z.markDirty(); later(); }; });
     $$('[data-pv]', side).forEach((el) => { el.oninput = () => { const pv = (H.pivot || def.pivot).slice(); pv[+el.dataset.pv] = +el.value; H.pivot = pv; $(`[data-v="pivot${el.dataset.pv}"]`, side).textContent = (+el.value).toFixed(1) + '%'; Z.markDirty(); later(); }; });
-    $('#hreset').onclick = () => { ['angle', 'dist', 'dir', 'ms', 'pivot'].forEach((k) => delete H[k]); Z.markDirty(); hingeCard(side, g, p, vs); later(); };
+    $$('[data-rim]', side).forEach((el) => { el.oninput = () => {
+      const k = el.dataset.rim, v = +el.value / 100;
+      fins.forEach((f) => { const kn = g.geom[f].knob; kn.rim = { ...(kn.rim || {}), [k === 'rt' ? 't' : 'shade']: v }; });
+      $(`[data-v="${k}"]`, side).textContent = k === 'rt' ? (+el.value).toFixed(1) + '%' : Math.round(+el.value) + '%';
+      Z.markDirty(); rebuild();
+    }; });
+    $('#hreset').onclick = () => { ['angle', 'dist', 'dir', 'ms', 'pivot', 'grow'].forEach((k) => delete H[k]); Z.markDirty(); hingeCard(side, g, p, vs); later(); };
   }
   async function productArt(id) {
     const p = await productById(id).catch(() => null), r = p && rolesOf(p.handle).find((x) => x.k === 'grinder');

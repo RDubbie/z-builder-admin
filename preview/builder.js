@@ -424,8 +424,9 @@
       ['knobA', 'knobB', 'capA', 'capB', 'capNone', 'ring', 'chamber'].forEach((n) => { this.q(n).style.display = showArt ? '' : 'none'; });
       if (!showArt) return;
       const g = a.geom, kp = g.knobPos;
-      // Z1: the funnel stays on the body when the front slides out, so its cap must not ride along with the front
-      const capHost = (this.AG.hinge || {}).mode === 'slide' ? this.q('frame') : this.q('front');
+      // the cap stays on its funnel: Z1's funnel stays on the body when the front slides out, Z2's comes off with the front
+      const Hg = this.AG.hinge || {}, capOnFront = Hg.funnel ? Hg.funnel === 'front' : Hg.mode !== 'slide';
+      const capHost = capOnFront ? this.q('front') : this.q('frame');
       ['capA', 'capB', 'capNone'].forEach((n) => { const el = this.q(n); if (el.parentNode !== capHost) capHost.appendChild(el); });
       if (kp) this.pos(this.q('ring'), [kp[0] + kp[2] * 0.13, kp[1] + kp[3] * 0.03, kp[2] * 0.74, kp[3] * 0.94]);
       const fc = g.face, ch = this.q('chamber');
@@ -473,21 +474,58 @@
     }
     async drawKnob(cv, a, acc) {
       const [tex, D, L] = await Promise.all([loadImg((acc.tex && acc.tex.src) || acc.image), loadImg(a.urls.knobD), loadImg(a.urls.knobL)]);
-      const g = a.geom.knob, scale = 2, W = Math.round(g.size * scale);
+      const g = a.geom.knob, s = 2, W = Math.round(g.size * s);
       cv.width = W; cv.height = W;
       const ctx = cv.getContext('2d'), crop = this.C.settings.accentCrop;
-      if (g.mesh && g.mesh.pts) {
-        drawMesh(ctx, texSquare(tex, acc.tex, crop), g.mesh, W, W);   // molded in the Art studio
-      } else {
+      const layer = () => { const c = document.createElement('canvas'); c.width = c.height = W; return c; };
+      // the wood, placed in the face ellipse (or molded in the Art studio)
+      const wood = layer(), w = wood.getContext('2d');
+      if (g.mesh && g.mesh.pts) drawMesh(w, texSquare(tex, acc.tex, crop), g.mesh, W, W);
+      else {
         let src = tex, tw = tex.naturalWidth, th = tex.naturalHeight, side = Math.min(tw, th) * crop, sx = (tw - side) / 2, sy = (th - side) / 2;
         if (acc.tex) { src = texSquare(tex, acc.tex, crop); sx = sy = 0; side = src.width; }
-        const put = (w, h, dx) => {
-          ctx.save(); ctx.translate((g.cx + dx) * scale, g.cy * scale); ctx.rotate(-g.rot * Math.PI / 180);
-          ctx.drawImage(src, sx, sy, side, side, -w * scale / 2, -h * scale / 2, w * scale, h * scale); ctx.restore();
-        };
-        put(g.w, g.h, 0);
+        // a little larger than the face, so the edge and the rim always have wood under them
+        w.save(); w.translate(g.cx * s, g.cy * s); w.rotate(-g.rot * Math.PI / 180);
+        w.drawImage(src, sx, sy, side, side, -g.w * s * 0.56, -g.h * s * 0.56, g.w * s * 1.12, g.h * s * 1.12); w.restore();
       }
-      this.shade(ctx, W, W, D, L);
+      const cx = g.cx * s, cy = g.cy * s, rx = g.w * s / 2, ry = g.h * s / 2, rot = -g.rot * Math.PI / 180;
+      // the face lit by the photo's own light. The photo's lit area can stop short of the face's edge, so the light
+      // maps are grown outward under themselves first (they are smooth, so this leaves no seam)
+      const grow = (im) => { const c = layer(), x = c.getContext('2d'); for (const k of [1.14, 1.09, 1.05, 1.02, 1]) { x.save(); x.translate(cx, cy); x.scale(k, k); x.translate(-cx, -cy); x.drawImage(im, 0, 0, W, W); x.restore(); } return c; };
+      const face = layer(), f = face.getContext('2d'); f.drawImage(wood, 0, 0); this.shade(f, W, W, grow(D), grow(L));
+      // ---- the accent piece stands a few millimetres proud of the dial: draw its side wall, then a crisp face ----
+      const ell = (c, ox = 0, oy = 0, k = 1) => { c.beginPath(); c.ellipse(cx + ox, cy + oy, rx * k, ry * k, rot, 0, Math.PI * 2); };
+      const H = this.AG.hinge || {}, R = g.rim || {};
+      // the wall runs from the face back toward the body: opposite the way the front slides off, else to the right
+      const dir = (R.dir != null ? +R.dir : H.dir != null ? +H.dir + 180 : 0) * Math.PI / 180;
+      const depth = (R.t != null ? +R.t : 0.07) * g.h * s, vx = Math.cos(dir) * depth, vy = Math.sin(dir) * depth;
+      if (depth > 0.5) {
+        const rim = layer(), r = rim.getContext('2d'), n = Math.max(2, Math.ceil(depth));
+        for (let i = n; i >= 0; i--) {                       // from the back forward: the wood's edge streaks into side grain
+          const ox = vx * i / n, oy = vy * i / n;
+          r.save(); ell(r, ox, oy); r.clip(); r.drawImage(wood, ox, oy); r.restore();
+        }
+        r.globalCompositeOperation = 'source-atop';
+        const gr = r.createLinearGradient(cx, cy, cx + vx * 3, cy + vy * 3);
+        const sh = R.shade != null ? +R.shade : 0.3;
+        gr.addColorStop(0, `rgba(0,0,0,${sh})`); gr.addColorStop(1, `rgba(0,0,0,${Math.min(0.9, sh + 0.28)})`);
+        r.fillStyle = gr; r.fillRect(0, 0, W, W);
+        const top = r.createLinearGradient(0, cy - ry, 0, cy + ry);   // light from above catches the top of the wall
+        top.addColorStop(0, 'rgba(255,240,220,.16)'); top.addColorStop(0.5, 'rgba(255,240,220,0)'); r.fillStyle = top; r.fillRect(0, 0, W, W);
+        ctx.drawImage(rim, 0, 0);
+        ctx.save(); ell(ctx, vx, vy); ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.stroke(); ctx.restore();   // where the wall meets the dial
+      }
+      // the face: an exact ellipse, wood under the lit wood so the edge never shows a seam
+      ctx.save(); ell(ctx); ctx.clip();
+      ctx.drawImage(wood, 0, 0); ctx.drawImage(face, 0, 0);
+      // a soft roll-off at the rim makes the face read as a solid disc, not a sticker
+      ctx.translate(cx, cy); ctx.rotate(rot); ctx.scale(1, ry / rx);
+      const v = ctx.createRadialGradient(0, 0, rx * 0.8, 0, 0, rx);
+      v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(0.85, 'rgba(0,0,0,.14)'); v.addColorStop(1, 'rgba(0,0,0,.34)');
+      ctx.fillStyle = v; ctx.fillRect(-rx, -rx, rx * 2, rx * 2);
+      ctx.restore();
+      // a fine chamfer line catches the light along the face edge
+      ctx.save(); ell(ctx); ctx.clip(); ell(ctx); ctx.lineWidth = 2.2; ctx.strokeStyle = 'rgba(255,248,235,.22)'; ctx.stroke(); ctx.restore();
     }
     async drawCap(cv, a, c) {
       if (/steel|stainless|metal|alumin|titan|chrome/i.test(c.title) && a.urls.capMetal) {
@@ -619,8 +657,11 @@
         ], { duration: D, easing: 'cubic-bezier(.5,.05,.35,1)', fill: 'forwards' });
         // slide along the cylinder's axis (it tilts slightly down toward the dial), not straight sideways
         const ang = H.angle != null ? +H.angle : -25;
-        const dir = H.dir != null ? +H.dir * Math.PI / 180 : null, dx = dir == null ? -out : out * Math.cos(dir), dy = dir == null ? out * 0.06 : out * Math.sin(dir);
-        const pose = slide ? ['translate(0%,0%)', `translate(${dx}%,${dy}%)`, `translate(${-dx * 0.03}%,0%)`] : ['rotate(0deg)', `rotate(${ang}deg)`, `rotate(${-ang * 0.032}deg)`];
+        // dir is a true angle in the photo (0 = right, 90 = down); translate % are of the frame's width (x) and height (y)
+        const dir = H.dir != null ? +H.dir * Math.PI / 180 : null, ar = this.AG.box[0] / this.AG.box[1];
+        const dx = dir == null ? -out : out * Math.cos(dir), dy = dir == null ? out * 0.06 : out * Math.sin(dir) * ar;
+        const grow = slide && H.grow ? 1 + +H.grow : 1;           // coming toward the camera reads a little larger
+        const pose = slide ? ['translate(0%,0%) scale(1)', `translate(${dx}%,${dy}%) scale(${grow})`, `translate(${-dx * 0.025}%,${-dy * 0.025}%) scale(1)`] : ['rotate(0deg)', `rotate(${ang}deg)`, `rotate(${-ang * 0.032}deg)`];
         front.animate([
           { transform: pose[0], offset: 0 }, { transform: pose[0], offset: 0.14 },
           { transform: pose[1], offset: 0.34, easing: 'cubic-bezier(.3,0,.2,1)' }, { transform: pose[1], offset: 0.7 },

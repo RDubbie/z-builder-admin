@@ -125,7 +125,8 @@
   function hingeFrom(geom, slug) {
     const h = (geom && geom.hinge) || {}, mode = h.mode || 'swing', g0 = (geom && geom[slug]) || {};
     return { mode, angle: h.angle != null ? +h.angle : -25, pivotPct: Array.isArray(h.pivot) ? h.pivot.map(Number) : null, pivotPx: null,
-      dist: h.dist != null ? +h.dist : mode === 'slide' && g0.open ? +g0.open : 10, dir: h.dir != null ? +h.dir : null, ms: h.ms ? +h.ms : 1800 };
+      dist: h.dist != null ? +h.dist : mode === 'slide' && g0.open ? +g0.open : 10, dir: h.dir != null ? +h.dir : null, ms: h.ms ? +h.ms : 1800,
+      funnel: h.funnel || null, grow: h.grow != null ? +h.grow : null };
   }
   // cubic-bezier(x1, y1, x2, y2) easing, solved for x
   function bezier(x1, y1, x2, y2) {
@@ -134,7 +135,7 @@
     return (x) => { let t = x; for (let i = 0; i < 8; i++) { const d = slope(t, x1, x2); if (!d) break; t -= (at(t, x1, x2) - x) / d; } return at(clamp(t, 0, 1), y1, y2); };
   }
   const SETTLE = bezier(0.5, 0, 0.3, 1);
-  const lerpPose = (a, b, t) => ({ rot: (a.rot || 0) + ((b.rot || 0) - (a.rot || 0)) * t, tx: (a.tx || 0) + ((b.tx || 0) - (a.tx || 0)) * t, ty: (a.ty || 0) + ((b.ty || 0) - (a.ty || 0)) * t });
+  const lerpPose = (a, b, t) => ({ rot: (a.rot || 0) + ((b.rot || 0) - (a.rot || 0)) * t, tx: (a.tx || 0) + ((b.tx || 0) - (a.tx || 0)) * t, ty: (a.ty || 0) + ((b.ty || 0) - (a.ty || 0)) * t, s: (a.s || 1) + ((b.s || 1) - (a.s || 1)) * t });
   /* the builder's front keyframes: hold to 14%, open by 34%, hold to 70%, overshoot by 86%, settle to 100% */
   function poseAt(p, P1, P2) {
     const P0 = { rot: 0, tx: 0, ty: 0 };
@@ -486,7 +487,7 @@
       const next = this.step < STEPS.length - 1 ? `<button type="button" class="zs-btn primary full" data-act="next">Next: ${STEPS[this.step + 1].n}</button>` : '';
       const edges = (lk) => `<div class="zs-k">Edges</div>
         <button type="button" class="zs-btn full" data-act="crisp" ${F.layers[lk] ? '' : 'disabled'}>Make edges crisp</button>
-        <label class="zs-field"><span>Detail</span><input type="range" min="0.4" max="4" step="0.1" value="${this.detail}" data-in="detail"><small>Fewer points give smoother lines. More points follow every bump.</small></label>
+        <label class="zs-field"><span>Detail</span><input type="range" min="0.4" max="4" step="0.1" value="${(4.4 - this.detail).toFixed(1)}" data-in="detail"><small>Left: fewer points, smoother lines. Right: more points that follow every bump.</small></label>
         <label class="zs-field"><span>Edge softness</span><input type="range" min="0" max="2" step="0.1" value="${this.feather}" data-in="feather"><small>0 is razor sharp. 0.5 to 1 matches a photo's natural edge.</small></label>
         <label class="zs-check"><input type="checkbox" data-in="smooth" ${!F.vec[lk] || F.vec[lk].smooth !== false ? 'checked' : ''}><span>Smooth curves between points</span></label>
         ${F.hints[lk] ? '<button type="button" class="zs-btn full" data-act="clearHints">Clear Keep and Remove marks</button>' : ''}`;
@@ -554,7 +555,7 @@
         ${H.mode === 'slide' ? `<label class="zs-field"><span data-lab="hDist">How far it slides: ${r2(H.dist)}%</span><input type="range" min="1" max="45" step="0.5" value="${H.dist}" data-in="hDist"></label>
           <label class="zs-field"><span data-lab="hDir">Direction: ${Math.round(dirNow)}&deg;</span><input type="range" min="0" max="360" step="1" value="${dirNow}" data-in="hDir"><small>0 is right, 90 is down, 180 is left. Or drag the arrow tip on the photo.</small></label>
           <button type="button" class="zs-btn" data-act="dirReset" ${H.dir != null ? '' : 'disabled'}>Slide along the grinder (default)</button>` : ''}
-        ${on ? `<label class="zs-field"><span data-lab="hMs">Speed: ${(H.ms / 1000).toFixed(1)} s</span><input type="range" min="0.6" max="4" step="0.1" value="${H.ms / 1000}" data-in="hMs"><small>The whole move: open, drop the burr, close.</small></label>` : ''}
+        ${on ? `<label class="zs-field"><span data-lab="hMs">Speed: ${(H.ms / 1000).toFixed(1)} s</span><input type="range" min="0.6" max="4" step="0.1" value="${(4.6 - H.ms / 1000).toFixed(1)}" data-in="hMs"><small>Slow to fast. The whole move: open, drop the burr, close.</small></label>` : ''}
         <div class="zs-row">${on ? `<button type="button" class="zs-btn" data-act="play" ${F.layers.front ? '' : 'disabled'}>Play</button>` : ''}${saved ? '<button type="button" class="zs-btn primary" data-act="saveOpening">Save opening</button>' : ''}</div>
         ${saved ? '<p style="font-size:12px">Save opening keeps the current art and changes only how it opens.</p>' : '<p style="font-size:12px">Save art in step 7 saves the opening too.</p>'}<p data-r="openMsg"></p>`;
     }
@@ -598,13 +599,13 @@
           const v = el.type === 'checkbox' ? el.checked : el.type === 'range' || el.tagName === 'SELECT' ? +el.value : el.value;
           if (k === 'smooth') { const lk = this.layerKey, V = F.vec[lk]; if (V) { V.smooth = v; this.fromVec(lk); } return; }
           if (k === 'feather') { this.feather = v; const lk = this.layerKey; if (F.vec[lk]) this.fromVec(lk); return; }
-          if (k === 'detail') { this.detail = v; clearTimeout(this._dt); this._dt = setTimeout(() => { if (F.vec[this.layerKey]) this.makeCrisp(true); }, 250); return; }
+          if (k === 'detail') { this.detail = 4.4 - v; clearTimeout(this._dt); this._dt = setTimeout(() => { if (F.vec[this.layerKey]) this.makeCrisp(true); }, 250); return; }
           if (k === 'meshN') { this.meshN = v; this.pushUndo(); if (STEPS[this.step].k === 'knob') F.knobMesh = null; else F.capMesh = null; this.ensureMesh(); this.changed(); return; }
           const lab = (t) => { const l = $(`[data-lab="${k}"]`, side); if (l) l.innerHTML = t; this.dirty = true; this.draw(); };
           if (k === 'hAngle') { this.H.angle = v; return lab(`Opening angle: ${r2(v)}&deg;`); }
           if (k === 'hDist') { this.H.dist = v; return lab(`How far it slides: ${r2(v)}%`); }
           if (k === 'hDir') { this.H.dir = v; const b = $('[data-act="dirReset"]', side); if (b) b.disabled = false; return lab(`Direction: ${Math.round(v)}&deg;`); }
-          if (k === 'hMs') { this.H.ms = Math.round(v * 1000); return lab(`Speed: ${v.toFixed(1)} s`); }
+          if (k === 'hMs') { this.H.ms = Math.round((4.6 - v) * 1000); return lab(`Speed: ${(this.H.ms / 1000).toFixed(1)} s`); }
           this[k] = v; if (k === 'contrast' || k === 'side') F._cache = null; this.draw();
         };
       });
@@ -863,13 +864,14 @@
     }
     slideVec(F) {
       const H = this.H, b = this.frameBox(F), out = H.dist;
-      const dx = H.dir == null ? -out : out * Math.cos(rad(H.dir)), dy = H.dir == null ? out * 0.06 : out * Math.sin(rad(H.dir));
+      // dir is a true angle in the photo, the same as the builder: x is % of the frame's width, y % of its height
+      const dx = H.dir == null ? -out : out * Math.cos(rad(H.dir)), dy = H.dir == null ? out * 0.06 : out * Math.sin(rad(H.dir)) * b.BW / b.BH;
       return { dx, dy, px: dx / 100 * b.BW, py: dy / 100 * b.BH };
     }
-    openPose(F) { if (this.hinge === 'slide') { const v = this.slideVec(F); return { tx: v.px, ty: v.py }; } return { rot: this.H.angle }; }
-    overPose(F) { if (this.hinge === 'slide') { const v = this.slideVec(F); return { tx: -v.px * 0.03, ty: 0 }; } return { rot: -this.H.angle * 0.032 }; }
+    openPose(F) { if (this.hinge === 'slide') { const v = this.slideVec(F); return { tx: v.px, ty: v.py, s: 1 + (+this.H.grow || 0) }; } return { rot: this.H.angle }; }
+    overPose(F) { if (this.hinge === 'slide') { const v = this.slideVec(F); return { tx: -v.px * 0.025, ty: -v.py * 0.025 }; } return { rot: -this.H.angle * 0.032 }; }
     applyPose(x, pose, F) {
-      if (this.hinge === 'slide') { x.translate(pose.tx || 0, pose.ty || 0); return; }
+      if (this.hinge === 'slide') { x.translate(pose.tx || 0, pose.ty || 0); if (pose.s && pose.s !== 1) { const [ox, oy] = this.slideOrigin(F); x.translate(ox, oy); x.scale(pose.s, pose.s); x.translate(-ox, -oy); } return; }
       const [px, py] = this.pivotPx(F); x.translate(px, py); x.rotate(rad(pose.rot || 0)); x.translate(-px, -py);
     }
     slideOrigin(F) { const E = F.faceEll; if (E) return [E.cx, E.cy]; const b = this.frontBox(F); return b ? [b.x + b.w / 2, b.y + b.h / 2] : this.pivotPx(F); }
@@ -895,6 +897,8 @@
         else if (H.pivotPct) o.pivot = H.pivotPct.map(r3);
         o.ms = Math.round(H.ms);
       }
+      if (H.funnel) o.funnel = H.funnel;                  // whether the funnel and cap ride on the front
+      if (H.mode === 'slide' && H.grow != null) o.grow = H.grow;
       return o;
     }
     /* change only how it opens, on the art that is already saved (the built-in Z1 and Z2 art too) */
@@ -1492,7 +1496,7 @@
         <label class="zs-check"><input type="checkbox" data-in="showBg" ${this.showBg ? 'checked' : ''}><span>Show the removed background faintly</span></label>
         <div class="zs-k">Edges</div>
         <button type="button" class="zs-btn full" data-act="crisp" ${this.mask ? '' : 'disabled'}>Make edges crisp</button>
-        <label class="zs-field"><span>Detail</span><input type="range" min="0.4" max="4" step="0.1" value="${this.detail}" data-in="detail"><small>Fewer points give smoother lines. More points follow every bump.</small></label>
+        <label class="zs-field"><span>Detail</span><input type="range" min="0.4" max="4" step="0.1" value="${(4.4 - this.detail).toFixed(1)}" data-in="detail"><small>Left: fewer points, smoother lines. Right: more points that follow every bump.</small></label>
         <label class="zs-field"><span>Edge softness</span><input type="range" min="0" max="2" step="0.1" value="${this.feather}" data-in="feather"><small>0 is razor sharp. 0.5 to 1 matches a photo's natural edge.</small></label>
         <label class="zs-check"><input type="checkbox" data-in="smooth" ${this.smooth ? 'checked' : ''}><span>Smooth curves between points</span></label>
         <div class="zs-k">Result</div>
@@ -1515,7 +1519,7 @@
           if (k === 'showBg') { this.showBg = v; this.draw(); return; }
           if (k === 'smooth') { this.smooth = v; if (this.vec) { this.vec.smooth = v; this.fromVec(); } return; }
           if (k === 'feather') { this.feather = v; if (this.vec) this.fromVec(); return; }
-          if (k === 'detail') { this.detail = v; clearTimeout(this._dt); this._dt = setTimeout(() => { if (this.vec) this.crisp(true); }, 250); return; }
+          if (k === 'detail') { this.detail = 4.4 - v; clearTimeout(this._dt); this._dt = setTimeout(() => { if (this.vec) this.crisp(true); }, 250); return; }
           if (k === 'pad') { this.pad = v; const l = $('[data-lab="pad"]', side); if (l) l.textContent = `Padding: ${v}%`; }
           if (k === 'trim') this.trim = v; if (k === 'square') this.square = v;
           this._out = null; this.preview();
