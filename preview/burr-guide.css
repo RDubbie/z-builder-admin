@@ -3,9 +3,14 @@
   --g-display:"Archivo","Helvetica Neue",Arial,sans-serif;--g-body:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;--g-ease:cubic-bezier(.65,.05,.25,1)}
 .zbg{background:var(--g-ink);color:var(--g-fg);font-family:var(--g-body);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;border-radius:4px}
 .zbg *,.zbg-ov *{box-sizing:border-box}
+/* the block fills its section (themes often lay blocks out in a flex row that would shrink it), and in
+   "Edge to edge" mode burr-guide.js widens it to the full window */
+[data-zbg-root]{display:block;box-sizing:border-box;width:100%;max-width:none;min-width:0;flex:1 1 100%;align-self:stretch;grid-column:1 / -1}
+[data-zbg-root][data-zbg-width="full"] .zbg{border-radius:0}
+.shopify-app-block:has(> [data-zbg-root]){width:100%;max-width:none;flex:1 1 100%;align-self:stretch;min-width:0}
 .zbg button,.zbg-ov button{font:inherit;color:inherit}
 .zbg [hidden],.zbg-ov [hidden]{display:none!important}
-.zbg-wrap{max-width:1360px;margin:0 auto;padding:18px clamp(16px,3vw,40px) 0}
+.zbg-wrap{max-width:none;margin:0 auto;padding:18px clamp(16px,3vw,40px) 0}
 .zbg-top{display:flex;align-items:center;justify-content:space-between;gap:16px 20px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid var(--g-line)}
 .zbg-k{font-family:var(--g-display);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--g-muted)}
 .zbg-steps{list-style:none;display:flex;gap:6px;margin:0;padding:0;flex-wrap:wrap}
@@ -128,3 +133,6 @@ html.zbg-lock{overflow:hidden}
 @media (max-width:960px){.zbg-grid{grid-template-columns:minmax(0,1fr)}.zbg-modal .zbg-stage{display:none}}
 @media (max-width:560px){.zbg-steps .lbl{display:none}.zbg-btn{padding:11px 16px}.zbg-tot .v{font-size:16px}.zbg-gcard .gm{font-size:34px}.zbg-sh p{display:none}}
 @media (prefers-reduced-motion:reduce){.zbg *,.zbg-ov *{transition-duration:.01ms!important;animation-duration:.01ms!important}}
+.zbg-note{flex-basis:100%;margin:8px 0 0;font-size:13px;color:var(--g-wood)}
+.zbg-note.err{color:#ff8a7a}
+.zbg-note a{color:inherit;text-decoration:underline}
