@@ -8,31 +8,31 @@
   <!-- App Bridge: connects this page to Shopify admin (session, nav, resource pickers, toasts, Direct API access) -->
   <meta name="shopify-api-key" content="6f4b6d1576b4c07412a4e61adc86aaaa">
   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
-  <link rel="stylesheet" href="admin.css">
-  <link rel="stylesheet" href="studio.css">
-  <link rel="stylesheet" href="preview/builder.css">
-  <link rel="stylesheet" href="preview/burr-guide.css">
+  <link rel="stylesheet" href="admin.css?v=36641cae">
+  <link rel="stylesheet" href="studio.css?v=a4d55d49">
+  <link rel="stylesheet" href="preview/builder.css?v=620ff686">
+  <link rel="stylesheet" href="preview/burr-guide.css?v=dceffabf">
 </head>
 <body>
   <!-- the app's pages in the Shopify admin sidebar, like Globo -->
   <ui-nav-menu>
     <a href="./" rel="home">Home</a>
-    <a href="./#/sets">Option sets</a>
-    <a href="./#/templates">Templates</a>
-    <a href="./#/products">Products</a>
-    <a href="./#/orders">Orders</a>
-    <a href="./#/catalog">Catalog</a>
-    <a href="./#/guides">Burr guides</a>
+    <a href="./?view=sets">Option sets</a>
+    <a href="./?view=templates">Templates</a>
+    <a href="./?view=products">Products</a>
+    <a href="./?view=orders">Orders</a>
+    <a href="./?view=catalog">Catalog</a>
+    <a href="./?view=guides">Burr guides</a>
   </ui-nav-menu>
   <div class="savebar" id="savebar" role="region" aria-label="Unsaved changes"><span>Unsaved changes</span><span style="display:flex;gap:8px"><button class="btn" id="sb-discard">Discard</button><button class="btn primary" id="sb-save">Save</button></span></div>
   <div class="page" id="app"></div>
   <div class="toast" id="toast" role="status"></div>
-  <script src="preview/catalog.js"></script>
-  <script src="preview/burr-guide.js"></script>
-  <script src="preview/builder.js"></script>
-  <script src="studio.js"></script>
+  <script src="preview/catalog.js?v=a975f4d8"></script>
+  <script src="preview/burr-guide.js?v=745c4a95"></script>
+  <script src="preview/builder.js?v=684f5dbf"></script>
+  <script src="studio.js?v=5988b01c"></script>
   <script>if (/[?&]mock\b/.test(location.search)) document.write('<script src="dev/mock.js"><\/script>');</script>
-  <script src="admin.js"></script>
-  <script src="admin-catalog.js"></script>
+  <script src="admin.js?v=8d56f65e"></script>
+  <script src="admin-catalog.js?v=2ee20ef4"></script>
 </body>
 </html>

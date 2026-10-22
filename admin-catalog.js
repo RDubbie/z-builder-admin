@@ -67,7 +67,7 @@
 
   /* ---------- catalog page frame ---------- */
   let SUB = 'grinders';
-  function nav(sub) { SUB = sub; history.replaceState(null, '', '#/catalog/' + sub); render(); }
+  function nav(sub) { SUB = sub; Z.setUrl('catalog', sub); render(); }
   async function saveCat() {
     const btns = $$('#sb-save, #csave'); btns.forEach((b) => { b.disabled = true; });
     try { await Z.saveCatalog(A.cat); A.catSaved = clone(A.cat); A.catIsSaved = true; Z.clean(); toast('Catalog saved. The store updates within a minute.'); if (A.view === 'catalog' && !/\/art$|^textures\/./.test(SUB)) render(); }
@@ -333,7 +333,7 @@
       </tbody></table></div></div>
       <div class="pv"><div class="pvh"><b>Live preview</b><span><button class="btn sm" id="gpv">Refresh preview</button></span></div><div class="pvb guidepv" id="gprev"></div></div>`;
     $('#gsave').onclick = saveCat;
-    $$('[data-gs]').forEach((b) => { b.onclick = () => { history.replaceState(null, '', '#/guides/' + b.dataset.gs); showGuides(b.dataset.gs); }; });
+    $$('[data-gs]').forEach((b) => { b.onclick = () => { Z.setUrl('guides', b.dataset.gs); showGuides(b.dataset.gs); }; });
     $$('[data-gd]').forEach((el) => { el.oninput = () => { const g = C.grinders.find((x) => x.key === el.dataset.gd); g.guide = { ...(g.guide || {}), desc: el.value }; Z.markDirty(); }; });
     $$('tr[data-b]').forEach((tr) => {
       const b = bs.find((x) => x.key === tr.dataset.b);

@@ -154,22 +154,56 @@
   const grinderName = (key) => { const g = A.cat && A.cat.grinders.find((x) => x.key === key); return g ? g.name : (key ? key.toUpperCase() : 'No grinder'); };
   const shortName = (g) => String(g.name).replace(/^Zerno\s+/i, '');
 
+  /* ---------- routing ----------
+     The page is ?view=<page>, plus #/<page>/<detail> for a detail. The Shopify admin sidebar (ui-nav-menu) links to
+     ?view=<page>; App Bridge changes the iframe's URL without reloading it, so every way the URL can change is watched. */
   function readRoute() {
     const h = location.hash.replace(/^#\/?/, '');
     const q = new URLSearchParams(location.search).get('view');
     const [view, ...rest] = (h || q || 'home').split('/');
     return { view: NAV.some(([k]) => k === view) ? view : 'home', sub: rest.join('/') };
   }
+  function urlFor(view, sub = '') {
+    const q = new URLSearchParams(location.search);
+    if (view === 'home') q.delete('view'); else q.set('view', view);
+    const s = q.toString();
+    return location.pathname + (s ? '?' + s : '') + (sub ? '#/' + view + '/' + sub : '');
+  }
+  let lastUrl = location.href;
+  function setUrl(view, sub = '') { history.replaceState(null, '', urlFor(view, sub)); lastUrl = location.href; A.view = view; A.sub = sub; }
+  function leaveOk() {
+    if (!A.dirty) return true;
+    if (!confirm('Leave without saving your changes?')) return false;
+    if (A.catSaved) A.cat = clone(A.catSaved);            // drop unsaved catalog edits too
+    return true;
+  }
   function go(view, sub = '') {
-    if (A.dirty) {
-      if (!confirm('Leave without saving your changes?')) return false;
-      if (A.catSaved) A.cat = clone(A.catSaved);          // drop unsaved catalog edits too
-    }
+    if (!leaveOk()) return false;
     clean(); A.onSave = null; A.onDiscard = null;
-    const h = '#/' + view + (sub ? '/' + sub : '');
-    if (location.hash !== h) history.replaceState(null, '', h);
+    setUrl(view, sub);
     route();
     return true;
+  }
+  function onUrlChange() {
+    if (location.href === lastUrl) return;
+    const r = readRoute();
+    if (r.view === A.view && r.sub === A.sub) { lastUrl = location.href; return; }
+    if (!leaveOk()) { history.replaceState(null, '', urlFor(A.view, A.sub)); lastUrl = location.href; return; }
+    lastUrl = location.href; clean(); A.onSave = null; A.onDiscard = null;
+    route();
+  }
+  function watchUrl() {
+    const later = () => setTimeout(onUrlChange, 0);
+    ['pushState', 'replaceState'].forEach((k) => { const orig = history[k].bind(history); history[k] = (...a) => { const r = orig(...a); later(); return r; }; });
+    window.addEventListener('popstate', later);
+    window.addEventListener('hashchange', later);
+    if (window.navigation && window.navigation.addEventListener) window.navigation.addEventListener('navigatesuccess', later);
+    // App Bridge fires shopify:navigate on the nav link; follow its href ourselves in case it only announces it
+    document.addEventListener('shopify:navigate', (e) => {
+      const href = e.target && e.target.getAttribute && e.target.getAttribute('href'); if (!href) return;
+      const u = new URL(href, location.href), v = u.searchParams.get('view') || u.hash.replace(/^#\/?/, '').split('/')[0] || 'home';
+      if (v !== A.view) go(NAV.some(([k]) => k === v) ? v : 'home');
+    });
   }
   async function route() {
     const r = readRoute(); A.view = r.view; A.sub = r.sub; A.set = null;
@@ -522,7 +556,7 @@
         const r = userErr((await gql(`mutation C($m:MetaobjectCreateInput!){ metaobjectCreate(metaobject:$m){ metaobject { id handle } userErrors { message } } }`,
           { m: { type: '$app:option_set', handle: `${slug(s.handle || s.title)}-${Date.now().toString(36)}`, fields: fieldsOf(s) } })).metaobjectCreate);
         s.id = r.metaobject.id; s.handle = r.metaobject.handle;
-        history.replaceState(null, '', '#/sets/' + num(s.id));
+        setUrl('sets', String(num(s.id)));
         if (!$('#del')) { const b = document.createElement('button'); b.className = 'btn danger'; b.id = 'del'; b.textContent = 'Delete'; b.onclick = del; $('#save').before(b); }
       }
       A.saved = clone(s); clean(); toast('Saved. The store updates within a minute.');
@@ -647,9 +681,9 @@
     $('#sb-save').onclick = () => A.onSave && A.onSave();
     $('#sb-discard').onclick = () => A.onDiscard && A.onDiscard();
     window.addEventListener('beforeunload', (e) => { if (A.dirty) { e.preventDefault(); e.returnValue = ''; } });
-    window.addEventListener('hashchange', () => { if (!A.dirty) route(); });
+    watchUrl();
     shell(); route();
   });
   window.ZBA = A;
-  window.ZBAdmin = { A, $, $$, esc, num, cents, money, slug, clone, same, toast, gql, userErr, field, parse, inp, chk, spin, errBox, head, go, markDirty, clean, body, pimg, toVariant, productsByHandles, variantsByIds, loadCatalog, saveCatalog, uploadImage, deepMerge, shortName };
+  window.ZBAdmin = { A, $, $$, esc, num, cents, money, slug, clone, same, toast, gql, userErr, field, parse, inp, chk, spin, errBox, head, go, setUrl, markDirty, clean, body, pimg, toVariant, productsByHandles, variantsByIds, loadCatalog, saveCatalog, uploadImage, deepMerge, shortName };
 })();
