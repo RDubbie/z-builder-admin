@@ -50,6 +50,11 @@
     return imgCache.get(url);
   }
 
+  /* mix two #rrggbb colors: t = 0 gives a, 1 gives b */
+  function mix(a, b, t) {
+    const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)), A = p(a), B = p(b);
+    return `rgb(${A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(',')})`;
+  }
   /* Texture square for an accent piece or funnel cap. tex (catalog.textures, set in the Art studio):
      { src, crop: [x, y, w, h] fractions of the photo, rot: degrees }. Without it: the center square times crop. */
   function texSquare(img, tex, crop) {
@@ -473,59 +478,81 @@
       ctx.globalCompositeOperation = 'source-over';
     }
     async drawKnob(cv, a, acc) {
-      const [tex, D, L] = await Promise.all([loadImg((acc.tex && acc.tex.src) || acc.image), loadImg(a.urls.knobD), loadImg(a.urls.knobL)]);
+      const tex = await loadImg((acc.tex && acc.tex.src) || acc.hi || acc.image);
       const g = a.geom.knob, s = 2, W = Math.round(g.size * s);
       cv.width = W; cv.height = W;
       const ctx = cv.getContext('2d'), crop = this.C.settings.accentCrop;
       const layer = () => { const c = document.createElement('canvas'); c.width = c.height = W; return c; };
-      // the wood, placed in the face ellipse (or molded in the Art studio)
+      // the wood, placed in the face ellipse (or molded in the Art studio). Product photos are soft, so a touch of snap
       const wood = layer(), w = wood.getContext('2d');
+      w.imageSmoothingQuality = 'high'; w.filter = 'contrast(1.07) saturate(1.06)';
       if (g.mesh && g.mesh.pts) drawMesh(w, texSquare(tex, acc.tex, crop), g.mesh, W, W);
       else {
         let src = tex, tw = tex.naturalWidth, th = tex.naturalHeight, side = Math.min(tw, th) * crop, sx = (tw - side) / 2, sy = (th - side) / 2;
         if (acc.tex) { src = texSquare(tex, acc.tex, crop); sx = sy = 0; side = src.width; }
-        // a little larger than the face, so the edge and the rim always have wood under them
+        // a little larger than the face, so the side wall always has wood under it
         w.save(); w.translate(g.cx * s, g.cy * s); w.rotate(-g.rot * Math.PI / 180);
         w.drawImage(src, sx, sy, side, side, -g.w * s * 0.56, -g.h * s * 0.56, g.w * s * 1.12, g.h * s * 1.12); w.restore();
       }
+      w.filter = 'none';
       const cx = g.cx * s, cy = g.cy * s, rx = g.w * s / 2, ry = g.h * s / 2, rot = -g.rot * Math.PI / 180;
-      // the face lit by the photo's own light. The photo's lit area can stop short of the face's edge, so the light
-      // maps are grown outward under themselves first (they are smooth, so this leaves no seam)
-      const grow = (im) => { const c = layer(), x = c.getContext('2d'); for (const k of [1.14, 1.09, 1.05, 1.02, 1]) { x.save(); x.translate(cx, cy); x.scale(k, k); x.translate(-cx, -cy); x.drawImage(im, 0, 0, W, W); x.restore(); } return c; };
-      const face = layer(), f = face.getContext('2d'); f.drawImage(wood, 0, 0); this.shade(f, W, W, grow(D), grow(L));
-      // ---- the accent piece stands a few millimetres proud of the dial: draw its side wall, then a crisp face ----
-      const ell = (c, ox = 0, oy = 0, k = 1) => { c.beginPath(); c.ellipse(cx + ox, cy + oy, rx * k, ry * k, rot, 0, Math.PI * 2); };
+      const ell = (c, ox = 0, oy = 0, grow = 0) => { c.beginPath(); c.ellipse(cx + ox, cy + oy, rx + grow, ry + grow, rot, 0, Math.PI * 2); };
       const H = this.AG.hinge || {}, R = g.rim || {};
-      // the wall runs from the face back toward the body: opposite the way the front slides off, else to the right
-      const dir = (R.dir != null ? +R.dir : H.dir != null ? +H.dir + 180 : 0) * Math.PI / 180;
-      const depth = (R.t != null ? +R.t : 0.07) * g.h * s, vx = Math.cos(dir) * depth, vy = Math.sin(dir) * depth;
+      // depth runs from the face back toward the body: opposite the way the front slides off, else to the right
+      const dir = (R.dir != null ? +R.dir : H.dir != null ? +H.dir + 180 : 0) * Math.PI / 180, ux = Math.cos(dir), uy = Math.sin(dir);
+      const depth = (R.t != null ? +R.t : 0.07) * g.h * s;          // how far the wood stands out
+      const seat = depth * 0.6;                                        // the part above the lip (the rest sits in the recess)
+      const lipW = (R.lip != null ? +R.lip : 0.035) * rx;             // the lip showing around the wood on the near side
+      const lipH = depth * 0.22, grow = seat + lipW;                   // lip height, and its radius beyond the wood
+      const fin = this.finishHex(a.slug);
+      // light comes from the upper left in every Zerno photo
+      const lightGrad = (c, r0, stops) => { const gr = c.createLinearGradient(cx - r0 * 0.75, cy - r0 * 0.75, cx + r0 * 0.75, cy + r0 * 0.75); stops.forEach(([t, col]) => gr.addColorStop(t, col)); return gr; };
+      const extrude = (c, from, to, fill) => {                        // a cylinder wall, drawn from the back forward
+        const n = Math.max(2, Math.ceil(Math.abs(to - from)));
+        for (let i = n; i >= 0; i--) { const d = from + (to - from) * i / n; fill(d * ux, d * uy); }
+      };
       if (depth > 0.5) {
-        const rim = layer(), r = rim.getContext('2d'), n = Math.max(2, Math.ceil(depth));
-        for (let i = n; i >= 0; i--) {                       // from the back forward: the wood's edge streaks into side grain
-          const ox = vx * i / n, oy = vy * i / n;
-          r.save(); ell(r, ox, oy); r.clip(); r.drawImage(wood, ox, oy); r.restore();
-        }
+        // ---- the lip: a ring of the grinder's own finish that the accent seats into ----
+        const lip = layer(), l = lip.getContext('2d');
+        extrude(l, seat + lipH, seat, (ox, oy) => { ell(l, ox, oy, grow); l.fillStyle = mix(fin, '#000000', 0.38); l.fill(); });
+        ell(l, seat * ux, seat * uy, grow);
+        l.fillStyle = lightGrad(l, rx + grow, [[0, mix(fin, '#ffffff', 0.2)], [0.5, fin], [1, mix(fin, '#000000', 0.22)]]); l.fill();
+        l.save(); ell(l, seat * ux, seat * uy, grow); l.clip();
+        ell(l, seat * ux, seat * uy, grow); l.lineWidth = 2.4;          // the lip's machined edge catches the light
+        l.strokeStyle = lightGrad(l, rx + grow, [[0, 'rgba(255,255,255,.55)'], [0.45, 'rgba(255,255,255,.08)'], [1, 'rgba(255,255,255,0)']]); l.stroke();
+        ell(l, seat * ux, seat * uy, 1.5); l.lineWidth = 3; l.strokeStyle = 'rgba(0,0,0,.55)'; l.stroke();   // the recess the wood sits in
+        l.restore();
+        ctx.drawImage(lip, 0, 0);
+        // ---- the wood's side wall above the lip: its own grain, in shade ----
+        const sh = R.shade != null ? +R.shade : 0.3, side = layer(), sd = side.getContext('2d');
+        sd.drawImage(wood, 0, 0); sd.globalAlpha = Math.min(1, sh * 2.2); sd.globalCompositeOperation = 'multiply';
+        sd.fillStyle = 'rgb(128,96,70)'; sd.fillRect(0, 0, W, W);
+        sd.globalAlpha = 1; sd.globalCompositeOperation = 'destination-in'; sd.drawImage(wood, 0, 0);
+        const rim = layer(), r = rim.getContext('2d');
+        extrude(r, seat, 0, (ox, oy) => { r.save(); ell(r, ox, oy); r.clip(); r.drawImage(side, ox, oy); r.restore(); });
         r.globalCompositeOperation = 'source-atop';
-        const gr = r.createLinearGradient(cx, cy, cx + vx * 3, cy + vy * 3);
-        const sh = R.shade != null ? +R.shade : 0.3;
-        gr.addColorStop(0, `rgba(0,0,0,${sh})`); gr.addColorStop(1, `rgba(0,0,0,${Math.min(0.9, sh + 0.28)})`);
-        r.fillStyle = gr; r.fillRect(0, 0, W, W);
-        const top = r.createLinearGradient(0, cy - ry, 0, cy + ry);   // light from above catches the top of the wall
-        top.addColorStop(0, 'rgba(255,240,220,.16)'); top.addColorStop(0.5, 'rgba(255,240,220,0)'); r.fillStyle = top; r.fillRect(0, 0, W, W);
+        const top = r.createLinearGradient(0, cy - ry, 0, cy + ry);      // light from above catches the top of the wall
+        top.addColorStop(0, 'rgba(255,240,220,.22)'); top.addColorStop(0.45, 'rgba(255,240,220,0)'); top.addColorStop(1, 'rgba(0,0,0,.18)');
+        r.fillStyle = top; r.fillRect(0, 0, W, W);
+        r.globalCompositeOperation = 'source-over';
         ctx.drawImage(rim, 0, 0);
-        ctx.save(); ell(ctx, vx, vy); ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.stroke(); ctx.restore();   // where the wall meets the dial
       }
-      // the face: an exact ellipse, wood under the lit wood so the edge never shows a seam
+      // ---- the face: flat, crisp wood with the studio's soft light ----
       ctx.save(); ell(ctx); ctx.clip();
-      ctx.drawImage(wood, 0, 0); ctx.drawImage(face, 0, 0);
-      // a soft roll-off at the rim makes the face read as a solid disc, not a sticker
-      ctx.translate(cx, cy); ctx.rotate(rot); ctx.scale(1, ry / rx);
-      const v = ctx.createRadialGradient(0, 0, rx * 0.8, 0, 0, rx);
-      v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(0.85, 'rgba(0,0,0,.14)'); v.addColorStop(1, 'rgba(0,0,0,.34)');
-      ctx.fillStyle = v; ctx.fillRect(-rx, -rx, rx * 2, rx * 2);
+      ctx.drawImage(wood, 0, 0);
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.fillStyle = lightGrad(ctx, rx, [[0, '#fff'], [0.55, '#f6f2ec'], [1, '#d9d0c6']]); ctx.fillRect(0, 0, W, W);
+      ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = lightGrad(ctx, rx, [[0, 'rgba(255,250,240,.16)'], [0.4, 'rgba(255,250,240,0)']]); ctx.fillRect(0, 0, W, W);
+      ctx.globalCompositeOperation = 'source-over';
+      // the rounded edge: bright where it faces the light, a shadow line where it turns away
+      ell(ctx); ctx.lineWidth = Math.max(2, rx * 0.022);
+      ctx.strokeStyle = lightGrad(ctx, rx, [[0, 'rgba(255,248,232,.7)'], [0.42, 'rgba(255,248,232,.12)'], [0.6, 'rgba(0,0,0,0)'], [1, 'rgba(40,25,10,.35)']]); ctx.stroke();
       ctx.restore();
-      // a fine chamfer line catches the light along the face edge
-      ctx.save(); ell(ctx); ctx.clip(); ell(ctx); ctx.lineWidth = 2.2; ctx.strokeStyle = 'rgba(255,248,235,.22)'; ctx.stroke(); ctx.restore();
+    }
+    finishHex(s) {
+      const c = this.finishSwatch[s];
+      return /^#[0-9a-f]{6}$/i.test(c || '') ? c : /white|silver|cream|ivory/.test(s || '') ? '#e7e6e2' : '#18191b';
     }
     async drawCap(cv, a, c) {
       if (/steel|stainless|metal|alumin|titan|chrome/i.test(c.title) && a.urls.capMetal) {
@@ -535,7 +562,7 @@
         cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
         return;
       }
-      const [tex, D, L] = await Promise.all([loadImg((c.tex && c.tex.src) || c.image), loadImg(a.urls.capD), loadImg(a.urls.capL)]);
+      const [tex, D, L] = await Promise.all([loadImg((c.tex && c.tex.src) || c.hi || c.image), loadImg(a.urls.capD), loadImg(a.urls.capL)]);
       const g = a.geom.cap, scale = 3, W = g.w * scale, H = g.h * scale;
       cv.width = W; cv.height = H;
       const ctx = cv.getContext('2d'), crop = this.C.settings.capCrop;

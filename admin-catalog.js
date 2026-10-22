@@ -630,6 +630,7 @@
       <h3 class="h3">Accent piece edge</h3>
       ${slider('rt', 'How far it stands out', 0, 15, 0.5, (rim0.t != null ? rim0.t * 100 : 7).toFixed(1) + '%', 'data-rim', rim0.t != null ? rim0.t * 100 : 7)}
       ${slider('rs', 'Edge shade <span class="muted">(light to dark)</span>', 0, 70, 1, Math.round(rim0.shade != null ? rim0.shade * 100 : 30) + '%', 'data-rim', rim0.shade != null ? rim0.shade * 100 : 30)}
+      ${slider('rl', 'Lip it seats into', 0, 8, 0.5, (rim0.lip != null ? rim0.lip * 100 : 3.5).toFixed(1) + '%', 'data-rim', rim0.lip != null ? rim0.lip * 100 : 3.5)}
       <div class="pv hpv"><div class="pvb" id="hprev"></div></div></div>`;
     // preview: the real builder on this grinder, with a burr and an accent piece, so Play shows exactly what customers see
     const C = { blockId: 'hinge', preview: true, grinderKey: g.key, catalog: A.cat, assetBase: 'preview/catalog.js', installedImage: null, included: [],
@@ -662,8 +663,8 @@
     $$('[data-pv]', side).forEach((el) => { el.oninput = () => { const pv = (H.pivot || def.pivot).slice(); pv[+el.dataset.pv] = +el.value; H.pivot = pv; $(`[data-v="pivot${el.dataset.pv}"]`, side).textContent = (+el.value).toFixed(1) + '%'; Z.markDirty(); later(); }; });
     $$('[data-rim]', side).forEach((el) => { el.oninput = () => {
       const k = el.dataset.rim, v = +el.value / 100;
-      fins.forEach((f) => { const kn = g.geom[f].knob; kn.rim = { ...(kn.rim || {}), [k === 'rt' ? 't' : 'shade']: v }; });
-      $(`[data-v="${k}"]`, side).textContent = k === 'rt' ? (+el.value).toFixed(1) + '%' : Math.round(+el.value) + '%';
+      fins.forEach((f) => { const kn = g.geom[f].knob; kn.rim = { ...(kn.rim || {}), [{ rt: 't', rs: 'shade', rl: 'lip' }[k]]: v }; });
+      $(`[data-v="${k}"]`, side).textContent = k === 'rs' ? Math.round(+el.value) + '%' : (+el.value).toFixed(1) + '%';
       Z.markDirty(); rebuild();
     }; });
     $('#hreset').onclick = () => { ['angle', 'dist', 'dir', 'ms', 'pivot', 'grow'].forEach((k) => delete H[k]); Z.markDirty(); hingeCard(side, g, p, vs); later(); };
