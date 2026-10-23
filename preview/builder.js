@@ -50,6 +50,7 @@
     return imgCache.get(url);
   }
 
+  const KNOB_PAD = 0.14;   // room around the accent canvas for its side wall and lip
   /* mix two #rrggbb colors: t = 0 gives a, 1 gives b */
   function mix(a, b, t) {
     const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)), A = p(a), B = p(b);
@@ -442,7 +443,7 @@
       if (isFace) ch.style.setProperty('--zb-face', /white|silver|cream/.test(a.slug) ? '#e7e7e4' : '#141518');
       if (resizeOnly) return;
       const acc = this.accent(this.S.accent);
-      if (acc && kp && g.knob && a.urls.knobD) this.swapCanvas('knob', g.knobPos, [a.slug, acc.id].join(':'), (cv) => this.drawKnob(cv, a, acc));
+      if (acc && kp && g.knob && a.urls.knobD) this.swapCanvas('knob', [kp[0] - kp[2] * KNOB_PAD, kp[1] - kp[3] * KNOB_PAD, kp[2] * (1 + 2 * KNOB_PAD), kp[3] * (1 + 2 * KNOB_PAD)], [a.slug, acc.id].join(':'), (cv) => this.drawKnob(cv, a, acc));
       const capNone = this.q('capNone');
       if (!g.capPos || !g.cap || !a.urls.capD) {             // no funnel cap region in this grinder's art
         ['capA', 'capB', 'capNone'].forEach((n) => { this.q(n).style.opacity = '0'; });
@@ -462,7 +463,30 @@
       this.pos(back, p); back.dataset.key = key;
       try { await draw(back); } catch (e) { console.warn('[Zerno builder]', e); return; }
       if (back.dataset.key !== key) return; // a newer choice won the race
+      const c = this.coatAt, since = c ? performance.now() - c.t : 1e9;
+      if (c && since < 1500 && key.startsWith(c.slug + ':')) {
+        // follow the photo's own wipe clock: it may not have started its first frame yet
+        const ph = this.root.querySelector('.zb-photo.coat'), an = ph && ph.getAnimations ? ph.getAnimations()[0] : null;
+        return this.coatSwap(front, back, p, an ? (an.currentTime || 0) : since);
+      }
       back.style.opacity = '1'; front.style.opacity = '0';
+    }
+    /* a new finish changes the accent's lip and the cap with the same wipe that passes over the photo, not a crossfade.
+       The photo's wipe is a 230% wide mask sliding across the whole frame; here it is the same wipe in this canvas's own box. */
+    coatSwap(front, back, p, since) {
+      const L = p[0] / 100, w = p[2] / 100, k = 1 - 2.3 / w;
+      back.style.setProperty('--zb-msize', `${230 / w}% 100%`);
+      back.style.setProperty('--zb-mfrom', `${((-1.3 - L) / w / k) * 100}% 0`);
+      back.style.setProperty('--zb-mto', `${(-L / w / k) * 100}% 0`);
+      back.style.animationDelay = `${-since}ms`;
+      clearTimeout(back.coatT);
+      back.classList.remove('coat'); back.style.transition = 'none'; back.style.zIndex = '5'; back.style.opacity = '1';
+      void back.offsetWidth; back.classList.add('coat');
+      back.coatT = setTimeout(() => {
+        front.style.transition = 'none'; front.style.opacity = '0';
+        back.classList.remove('coat'); back.style.zIndex = ''; back.style.animationDelay = '';
+        requestAnimationFrame(() => { front.style.transition = ''; back.style.transition = ''; });
+      }, Math.max(0, 1650 - since));
     }
     // Shade = multiply by the -d map, then add texture x -l map for highlights. Blend modes only, so no pixel reads.
     shade(ctx, W, H, D, L) {
@@ -479,75 +503,79 @@
     }
     async drawKnob(cv, a, acc) {
       const tex = await loadImg((acc.tex && acc.tex.src) || acc.hi || acc.image);
-      const g = a.geom.knob, s = 2, W = Math.round(g.size * s);
+      // the canvas has room around the face (KNOB_PAD) so the side wall and the lip are never cut off
+      const g = a.geom.knob, s = 2, S0 = Math.round(g.size * s), P = Math.round(S0 * KNOB_PAD), W = S0 + 2 * P;
       cv.width = W; cv.height = W;
       const ctx = cv.getContext('2d'), crop = this.C.settings.accentCrop;
       const layer = () => { const c = document.createElement('canvas'); c.width = c.height = W; return c; };
       // the wood, placed in the face ellipse (or molded in the Art studio). Product photos are soft, so a touch of snap
       const wood = layer(), w = wood.getContext('2d');
       w.imageSmoothingQuality = 'high'; w.filter = 'contrast(1.07) saturate(1.06)';
-      if (g.mesh && g.mesh.pts) drawMesh(w, texSquare(tex, acc.tex, crop), g.mesh, W, W);
+      if (g.mesh && g.mesh.pts) { w.save(); w.translate(P, P); drawMesh(w, texSquare(tex, acc.tex, crop), g.mesh, S0, S0); w.restore(); }
       else {
         let src = tex, tw = tex.naturalWidth, th = tex.naturalHeight, side = Math.min(tw, th) * crop, sx = (tw - side) / 2, sy = (th - side) / 2;
         if (acc.tex) { src = texSquare(tex, acc.tex, crop); sx = sy = 0; side = src.width; }
         // a little larger than the face, so the side wall always has wood under it
-        w.save(); w.translate(g.cx * s, g.cy * s); w.rotate(-g.rot * Math.PI / 180);
+        w.save(); w.translate(g.cx * s + P, g.cy * s + P); w.rotate(-g.rot * Math.PI / 180);
         w.drawImage(src, sx, sy, side, side, -g.w * s * 0.56, -g.h * s * 0.56, g.w * s * 1.12, g.h * s * 1.12); w.restore();
       }
       w.filter = 'none';
-      const cx = g.cx * s, cy = g.cy * s, rx = g.w * s / 2, ry = g.h * s / 2, rot = -g.rot * Math.PI / 180;
-      const ell = (c, ox = 0, oy = 0, grow = 0) => { c.beginPath(); c.ellipse(cx + ox, cy + oy, rx + grow, ry + grow, rot, 0, Math.PI * 2); };
+      // The fitted ellipse is the outside of the dial's cup rim. Inside it: the lip, then the wood. The wood's face sits
+      // toward the viewer and its side wall runs back to where it meets the lip, as in the product photos.
+      const cx = g.cx * s + P, cy = g.cy * s + P, rx = g.w * s / 2, ry = g.h * s / 2, rot = -g.rot * Math.PI / 180;
       const H = this.AG.hinge || {}, R = g.rim || {};
       // depth runs from the face back toward the body: opposite the way the front slides off, else to the right
       const dir = (R.dir != null ? +R.dir : H.dir != null ? +H.dir + 180 : 0) * Math.PI / 180, ux = Math.cos(dir), uy = Math.sin(dir);
       const depth = (R.t != null ? +R.t : 0.07) * g.h * s;          // how far the wood stands out
-      const seat = depth * 0.6;                                        // the part above the lip (the rest sits in the recess)
-      const lipW = (R.lip != null ? +R.lip : 0.035) * rx;             // the lip showing around the wood on the near side
-      const lipH = depth * 0.22, grow = seat + lipW;                   // lip height, and its radius beyond the wood
-      const fin = this.finishHex(a.slug);
+      const L = (R.lip != null ? +R.lip : 0.03) * rx;                  // the lip showing between the wood and the rim's outer edge
+      const rxf = Math.max(4, rx - L - depth * Math.abs(ux) / 2), ryf = Math.max(4, ry - L - depth * Math.abs(uy) / 2);
+      const fcx = cx - ux * depth / 2, fcy = cy - uy * depth / 2;     // the wood's face
+      const rimE = (c, ox = 0, oy = 0, k = 0) => { c.beginPath(); c.ellipse(cx + ox, cy + oy, Math.max(1, rx - k), Math.max(1, ry - k), rot, 0, Math.PI * 2); };
+      const ell = (c, off = 0) => { c.beginPath(); c.ellipse(fcx + ux * off, fcy + uy * off, rxf, ryf, rot, 0, Math.PI * 2); };
+      // the wood, moved from the fitted ellipse onto the face
+      const fw = layer(), fx = fw.getContext('2d');
+      fx.translate(fcx, fcy); fx.rotate(rot); fx.scale(rxf / rx, ryf / ry); fx.rotate(-rot); fx.translate(-cx, -cy); fx.drawImage(wood, 0, 0);
+      const fin = /^#[0-9a-f]{6}$/i.test(R.color || '') ? R.color : this.finishHex(a.slug);   // the dial's own color in this photo
+      const light = parseInt(fin.slice(1, 3), 16) > 128;
       // light comes from the upper left in every Zerno photo
-      const lightGrad = (c, r0, stops) => { const gr = c.createLinearGradient(cx - r0 * 0.75, cy - r0 * 0.75, cx + r0 * 0.75, cy + r0 * 0.75); stops.forEach(([t, col]) => gr.addColorStop(t, col)); return gr; };
-      const extrude = (c, from, to, fill) => {                        // a cylinder wall, drawn from the back forward
-        const n = Math.max(2, Math.ceil(Math.abs(to - from)));
-        for (let i = n; i >= 0; i--) { const d = from + (to - from) * i / n; fill(d * ux, d * uy); }
-      };
+      const lightGrad = (c, r0, stops, x0 = cx, y0 = cy) => { const gr = c.createLinearGradient(x0 - r0 * 0.75, y0 - r0 * 0.75, x0 + r0 * 0.75, y0 + r0 * 0.75); stops.forEach(([t, col]) => gr.addColorStop(t, col)); return gr; };
+      const steps = (from, to, fn) => { const n = Math.max(2, Math.ceil(Math.abs(to - from))); for (let i = n; i >= 0; i--) fn(from + (to - from) * i / n); };
+      // ---- the lip: the rim of the dial's cup, inside the fitted outline, following the accent all the way round ----
+      const lip = layer(), l = lip.getContext('2d');
+      steps(depth * 0.35, 0, (d) => { rimE(l, ux * d, uy * d); l.fillStyle = light ? mix(fin, '#000000', 0.14) : mix(fin, '#ffffff', 0.05); l.fill(); });   // its outer wall
+      rimE(l); l.fillStyle = lightGrad(l, rx, [[0, mix(fin, '#ffffff', light ? 0.22 : 0.08)], [0.5, fin], [1, mix(fin, '#000000', light ? 0.2 : 0.35)]]); l.fill();
+      l.save(); rimE(l); l.clip(); rimE(l); l.lineWidth = 2.4;          // the rounded outer edge catches the light
+      l.strokeStyle = lightGrad(l, rx, [[0, 'rgba(255,255,255,.55)'], [0.45, 'rgba(255,255,255,.08)'], [1, 'rgba(255,255,255,0)']]); l.stroke(); l.restore();
+      rimE(l, 0, 0, L * 0.7); l.fillStyle = mix(fin, '#000000', 0.72); l.fill();   // the cup's opening, dark where the wood goes in
+      rimE(l, 0, 0, L * 0.7); l.lineWidth = 1.4;
+      l.strokeStyle = lightGrad(l, rx, [[0, 'rgba(0,0,0,.3)'], [0.55, 'rgba(255,255,255,.06)'], [1, 'rgba(255,255,255,.35)']]); l.stroke();
+      ctx.drawImage(lip, 0, 0);
       if (depth > 0.5) {
-        // ---- the lip: a ring of the grinder's own finish that the accent seats into ----
-        const lip = layer(), l = lip.getContext('2d');
-        extrude(l, seat + lipH, seat, (ox, oy) => { ell(l, ox, oy, grow); l.fillStyle = mix(fin, '#000000', 0.38); l.fill(); });
-        ell(l, seat * ux, seat * uy, grow);
-        l.fillStyle = lightGrad(l, rx + grow, [[0, mix(fin, '#ffffff', 0.2)], [0.5, fin], [1, mix(fin, '#000000', 0.22)]]); l.fill();
-        l.save(); ell(l, seat * ux, seat * uy, grow); l.clip();
-        ell(l, seat * ux, seat * uy, grow); l.lineWidth = 2.4;          // the lip's machined edge catches the light
-        l.strokeStyle = lightGrad(l, rx + grow, [[0, 'rgba(255,255,255,.55)'], [0.45, 'rgba(255,255,255,.08)'], [1, 'rgba(255,255,255,0)']]); l.stroke();
-        ell(l, seat * ux, seat * uy, 1.5); l.lineWidth = 3; l.strokeStyle = 'rgba(0,0,0,.55)'; l.stroke();   // the recess the wood sits in
-        l.restore();
-        ctx.drawImage(lip, 0, 0);
-        // ---- the wood's side wall above the lip: its own grain, in shade ----
+        // ---- the wood's side wall, back to the lip: its own grain, in shade ----
         const sh = R.shade != null ? +R.shade : 0.3, side = layer(), sd = side.getContext('2d');
-        sd.drawImage(wood, 0, 0); sd.globalAlpha = Math.min(1, sh * 2.2); sd.globalCompositeOperation = 'multiply';
+        sd.drawImage(fw, 0, 0); sd.globalAlpha = Math.min(1, sh * 2.2); sd.globalCompositeOperation = 'multiply';
         sd.fillStyle = 'rgb(128,96,70)'; sd.fillRect(0, 0, W, W);
-        sd.globalAlpha = 1; sd.globalCompositeOperation = 'destination-in'; sd.drawImage(wood, 0, 0);
-        const rim = layer(), r = rim.getContext('2d');
-        extrude(r, seat, 0, (ox, oy) => { r.save(); ell(r, ox, oy); r.clip(); r.drawImage(side, ox, oy); r.restore(); });
+        sd.globalAlpha = 1; sd.globalCompositeOperation = 'destination-in'; sd.drawImage(fw, 0, 0);
+        const wall = layer(), r = wall.getContext('2d');
+        steps(depth, 0, (d) => { r.save(); ell(r, d); r.clip(); r.drawImage(side, ux * d, uy * d); r.restore(); });
         r.globalCompositeOperation = 'source-atop';
         const top = r.createLinearGradient(0, cy - ry, 0, cy + ry);      // light from above catches the top of the wall
         top.addColorStop(0, 'rgba(255,240,220,.22)'); top.addColorStop(0.45, 'rgba(255,240,220,0)'); top.addColorStop(1, 'rgba(0,0,0,.18)');
         r.fillStyle = top; r.fillRect(0, 0, W, W);
         r.globalCompositeOperation = 'source-over';
-        ctx.drawImage(rim, 0, 0);
+        ctx.drawImage(wall, 0, 0);
       }
       // ---- the face: flat, crisp wood with the studio's soft light ----
       ctx.save(); ell(ctx); ctx.clip();
-      ctx.drawImage(wood, 0, 0);
+      ctx.drawImage(fw, 0, 0);
       ctx.globalCompositeOperation = 'multiply';
-      ctx.fillStyle = lightGrad(ctx, rx, [[0, '#fff'], [0.55, '#f6f2ec'], [1, '#d9d0c6']]); ctx.fillRect(0, 0, W, W);
+      ctx.fillStyle = lightGrad(ctx, rxf, [[0, '#fff'], [0.55, '#f6f2ec'], [1, '#d9d0c6']], fcx, fcy); ctx.fillRect(0, 0, W, W);
       ctx.globalCompositeOperation = 'screen';
-      ctx.fillStyle = lightGrad(ctx, rx, [[0, 'rgba(255,250,240,.16)'], [0.4, 'rgba(255,250,240,0)']]); ctx.fillRect(0, 0, W, W);
+      ctx.fillStyle = lightGrad(ctx, rxf, [[0, 'rgba(255,250,240,.16)'], [0.4, 'rgba(255,250,240,0)']], fcx, fcy); ctx.fillRect(0, 0, W, W);
       ctx.globalCompositeOperation = 'source-over';
       // the rounded edge: bright where it faces the light, a shadow line where it turns away
-      ell(ctx); ctx.lineWidth = Math.max(2, rx * 0.022);
-      ctx.strokeStyle = lightGrad(ctx, rx, [[0, 'rgba(255,248,232,.7)'], [0.42, 'rgba(255,248,232,.12)'], [0.6, 'rgba(0,0,0,0)'], [1, 'rgba(40,25,10,.35)']]); ctx.stroke();
+      ell(ctx); ctx.lineWidth = Math.max(2, rxf * 0.022);
+      ctx.strokeStyle = lightGrad(ctx, rxf, [[0, 'rgba(255,248,232,.7)'], [0.42, 'rgba(255,248,232,.12)'], [0.6, 'rgba(0,0,0,0)'], [1, 'rgba(40,25,10,.35)']], fcx, fcy); ctx.stroke();
       ctx.restore();
     }
     finishHex(s) {
@@ -588,6 +616,7 @@
       clearTimeout(this.coatT);
       [...inc, ...others].forEach((e) => { e.classList.remove('top'); e.querySelector('.zb-photo').classList.remove('coat'); });
       if (this.reduce) { this.showFinish(toSlug); return; }
+      this.coatAt = { slug: toSlug, t: performance.now() };   // the accent and cap canvases join this wipe (coatSwap)
       inc.forEach((e) => { e.style.opacity = '1'; e.classList.add('top'); });
       photos.forEach((p) => { void p.offsetWidth; p.classList.add('coat'); });
       const sp = this.q('spray'), hz = this.q('haze'), white = /white|cream|ivory|light/.test(toSlug);
@@ -608,7 +637,8 @@
     knobRect() {
       const k = this.art() && this.visibleKnob();
       if (!k) { const s = this.q('stage').getBoundingClientRect(); return { left: s.left + s.width * 0.42, top: s.top + s.height * 0.55, width: s.width * 0.16, height: s.width * 0.16 }; }
-      const r = k.getBoundingClientRect();
+      const o = k.getBoundingClientRect(), f = KNOB_PAD / (1 + 2 * KNOB_PAD);   // the canvas has padding around the face
+      const r = { left: o.left + o.width * f, top: o.top + o.height * f, width: o.width * (1 - 2 * f), height: o.height * (1 - 2 * f) };
       return { left: r.left + r.width * 0.12, top: r.top + r.height * 0.04, width: r.width * 0.76, height: r.height * 0.92 };
     }
     async showStage() {
