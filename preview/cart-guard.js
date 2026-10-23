@@ -11,7 +11,7 @@
   let cart = null;
 
   const zb = (it) => (it && it.properties && it.properties._zb) || '';
-  const buildOf = (it) => (it && it.properties && it.properties.Build) || '';
+  const buildOf = (it) => (it && it.properties && (it.properties._build || it.properties.Build)) || '';
   const grinderFor = (it) => cart && cart.items.find((g) => zb(g) === 'grinder' && ((it.parent_relationship && it.parent_relationship.parent_key === g.key) || (buildOf(g) && buildOf(g) === buildOf(it))));
   // locked: a required part whose grinder is still in the cart
   const locked = (it) => zb(it) === 'required' && !!grinderFor(it);

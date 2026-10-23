@@ -1070,9 +1070,9 @@
     /* ---------- totals and cart ---------- */
     lines(build) {
       const S = this.S, v = this.variant(), L = [];
-      // _zb (hidden in the cart and at checkout): the grinder, and the burr set and accent piece it must keep (the cart
+      // _build and _zb are hidden from shoppers (the underscore). _build groups a build on the order; _zb: the grinder, and the burr set and accent piece it must keep (the cart
       // guard app embed locks those two). Parts on the grinder are nested under it, so they leave with it.
-      const P = (fit, zb) => ({ Build: build, ...(fit ? { Fitting: fit } : {}), ...(zb ? { _zb: zb } : {}) });
+      const P = (fit, zb) => ({ _build: build, ...(fit ? { Fitting: fit } : {}), ...(zb ? { _zb: zb } : {}) });
       L.push({ id: v.id, t: this.C.grinder.title.replace(/\s+-\s+.*$/, ''), s: v.title, p: v.price, props: P('', 'grinder') });
       S.burrs.forEach((id, i) => { const b = this.burr(id); L.push({ id, t: b.name + ' burrs', s: i === 0 ? 'Installed at the factory' : 'Spare set, ships in the box', p: b.price, props: P(i === 0 ? 'Install in grinder' : 'Spare set, in the box', i === 0 ? 'required' : ''), nest: i === 0 }); });
       const a = this.accent(S.accent);
@@ -1123,7 +1123,7 @@
         if (after === 'checkout') { location.href = this.C.shop.rootUrl.replace(/\/$/, '') + '/checkout'; return; }
         if (after === 'cart') { location.href = this.C.shop.cartUrl; return; }
         msg.className = 'zb-msg'; msg.hidden = false;
-        msg.innerHTML = `Added ${items.length} items to your cart as build ${esc(build)}. <a href="${esc(this.C.shop.cartUrl)}" style="color:inherit;text-decoration:underline">View cart</a>`;
+        msg.innerHTML = `Added ${items.length} items to your cart. <a href="${esc(this.C.shop.cartUrl)}" style="color:inherit;text-decoration:underline">View cart</a>`;
       } catch (e) {
         msg.className = 'zb-msg err'; msg.hidden = false;
         msg.textContent = `${e.message} Nothing was added. Try again, or contact us if it keeps happening.`;

@@ -21,7 +21,7 @@
   const day = (n) => new Date(Date.now() - n * 864e5).toISOString();
   const orders = [
     { id: 'gid://shopify/Order/5001', name: '#1001', createdAt: day(2), displayFinancialStatus: 'PAID', displayFulfillmentStatus: 'UNFULFILLED', currentTotalPriceSet: { shopMoney: { amount: '2649.00', currencyCode: 'USD' } },
-      lineItems: { nodes: [line(g.variants[1], { Build: 'Z2-TEST01' }), line(F.burrs[0], { Build: 'Z2-TEST01', Fitting: 'Install in grinder' }), line(F.caps[0], { Build: 'Z2-TEST01', Fitting: 'On the grinder' })] } },
+      lineItems: { nodes: [line(g.variants[1], { _build: 'Z2-TEST01' }), line(F.burrs[0], { _build: 'Z2-TEST01', Fitting: 'Install in grinder' }), line(F.caps[0], { _build: 'Z2-TEST01', Fitting: 'On the grinder' })] } },
     { id: 'gid://shopify/Order/5002', name: '#1002', createdAt: day(5), displayFinancialStatus: 'PAID', displayFulfillmentStatus: 'FULFILLED', currentTotalPriceSet: { shopMoney: { amount: '350.00', currencyCode: 'USD' } },
       lineItems: { nodes: [line(F.burrs[1], { _source: 'Burr Guide' })] } },
     { id: 'gid://shopify/Order/5003', name: '#1003', createdAt: day(6), displayFinancialStatus: 'PAID', displayFulfillmentStatus: 'FULFILLED', currentTotalPriceSet: { shopMoney: { amount: '99.00', currencyCode: 'USD' } },

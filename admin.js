@@ -809,9 +809,10 @@
     }
     return out.map((o) => {
       const lines = o.lineItems.nodes.map((l) => ({ ...l, attrs: Object.fromEntries((l.customAttributes || []).map((a) => [a.key, a.value])), total: cents(l.originalTotalSet.shopMoney.amount) }));
-      const builds = [...new Set(lines.map((l) => l.attrs.Build).filter(Boolean))];
+      const bid = (l) => l.attrs._build || l.attrs.Build;   // _build: hidden from shoppers; Build: orders before October 23
+      const builds = [...new Set(lines.map(bid).filter(Boolean))];
       const guide = lines.filter((l) => l.attrs._source === 'Burr Guide');
-      return { ...o, lines, builds, guide, total: cents(o.currentTotalPriceSet.shopMoney.amount), fromApp: lines.filter((l) => l.attrs.Build || l.attrs._source).reduce((t, l) => t + l.total, 0) };
+      return { ...o, lines, builds, guide, total: cents(o.currentTotalPriceSet.shopMoney.amount), fromApp: lines.filter((l) => bid(l) || l.attrs._source).reduce((t, l) => t + l.total, 0) };
     }).filter((o) => o.builds.length || o.guide.length);
   }
   async function showOrders() {
@@ -834,14 +835,14 @@
     const csv = $('#csv'); csv.disabled = !orders.length;
     csv.onclick = () => {
       const rows = [['Order', 'Date', 'Build', 'Source', 'Item', 'Variant', 'Quantity', 'Fitting', 'Line total']];
-      orders.forEach((o) => o.lines.filter((l) => l.attrs.Build || l.attrs._source).forEach((l) => rows.push([o.name, o.createdAt.slice(0, 10), l.attrs.Build || '', l.attrs.Build ? 'Builder' : l.attrs._source, l.title, l.variantTitle || '', l.quantity, l.attrs.Fitting || '', (l.total / 100).toFixed(2)])));
+      orders.forEach((o) => o.lines.filter((l) => l.attrs._build || l.attrs.Build || l.attrs._source).forEach((l) => { const id = l.attrs._build || l.attrs.Build || ''; rows.push([o.name, o.createdAt.slice(0, 10), id, id ? 'Builder' : l.attrs._source, l.title, l.variantTitle || '', l.quantity, l.attrs.Fitting || '', (l.total / 100).toFixed(2)]); }));
       const blob = new Blob([rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')], { type: 'text/csv' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `zerno-builder-orders-${days}d.csv`; a.click();
     };
   }
   function orderDetail(o) {
     const groups = {};
-    o.lines.forEach((l) => { const k = l.attrs.Build || (l.attrs._source ? 'Burr Guide' : ''); if (!k) return; (groups[k] = groups[k] || []).push(l); });
+    o.lines.forEach((l) => { const k = l.attrs._build || l.attrs.Build || (l.attrs._source ? 'Burr Guide' : ''); if (!k) return; (groups[k] = groups[k] || []).push(l); });
     return `<div class="odet">${Object.entries(groups).map(([k, ls]) => `<div><h4>${esc(k === 'Burr Guide' ? 'Added from the Burr Guide' : 'Build ' + k)}</h4><table class="vals"><tbody>${ls.map((l) => `<tr><td>${esc(l.title)}${l.variantTitle ? ` <span class="muted">${esc(l.variantTitle)}</span>` : ''}</td><td>${esc(l.attrs.Fitting || '')}</td><td>&times;${l.quantity}</td><td>${money(l.total)}</td></tr>`).join('')}</tbody></table></div>`).join('')}
       <a class="btn sm" href="shopify://admin/orders/${num(o.id)}" target="_top">Open in Shopify</a></div>`;
   }
@@ -855,7 +856,7 @@
       <p><b>Templates</b> are starting layouts for option sets. Save any option set as a template to reuse it for the next grinder.</p>
       <p><b>Burr guides</b> are one per burr size. Fit scores and copy decide how the Burr Guide ranks burrs on the Burr Guide page and in "Help me choose" in every builder.</p>
       <p><b>Prices</b> are the Shopify variant prices. Changing a price in an option set changes the variant everywhere it is sold.</p>
-      <p><b>Orders</b> show what came through the builders and the Burr Guide. Every cart line carries a Build number and a Fitting note, which also print on the order and packing slip.</p>
+      <p><b>Orders</b> show what came through the builders and the Burr Guide. Every cart line carries a build number (hidden from shoppers, shown here and on the order) and a Fitting note.</p>
       <p>Changes reach the store within about a minute of saving. If you do not see one, refresh. Nothing here changes the theme code.</p></div>`;
   }
 
