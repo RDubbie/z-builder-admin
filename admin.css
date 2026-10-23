@@ -103,6 +103,7 @@ table.list tr.clk:hover td{background:#fafafa}
 .fitg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .fitg label{font-size:12px;color:var(--p-muted);display:grid;gap:2px}
 .fitg input{min-height:28px;padding:3px 6px}
+[data-sc][aria-invalid]{border-color:var(--p-red);background:var(--p-red-bg);color:var(--p-red)}
 .bcard{border:1px solid var(--p-border);border-radius:10px;padding:12px;margin-bottom:10px;background:#fff}
 .bcard h3{font-size:14px;margin:0;display:flex;align-items:center;gap:8px;justify-content:space-between}
 .bcard h4{font-size:12px;color:var(--p-muted);font-weight:550;margin:10px 0 4px;text-transform:uppercase;letter-spacing:.04em}

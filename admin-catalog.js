@@ -16,7 +16,11 @@
   const toTen = (p, v) => (v == null ? '' : Math.round((isBonus(p) ? v + 5 : 1 + v * 3) * 10) / 10);
   const fromTen = (p, d) => (isBonus(p) ? d - 5 : (d - 1) / 3);
   const scoreIn = (b, p, attrs) => `<input type="number" step="0.5" min="1" max="10" data-sc="${p}" value="${toTen(p, getP(b, p))}" ${attrs}>`;
-  const bindScores = (box, b) => $$('[data-sc]', box).forEach((el) => { el.oninput = () => { const d = parseFloat(el.value); if (isNaN(d)) return; setP(b, el.dataset.sc, fromTen(el.dataset.sc, Math.min(10, Math.max(1, d)))); Z.markDirty(); }; });
+  // a score outside 1 to 10 turns the box red and is not saved; the warning shows once the box is left
+  const bindScores = (box, b) => $$('[data-sc]', box).forEach((el) => {
+    el.oninput = () => { const d = parseFloat(el.value), bad = !isNaN(d) && (d < 1 || d > 10); el.toggleAttribute('aria-invalid', bad); if (isNaN(d) || bad) return; setP(b, el.dataset.sc, fromTen(el.dataset.sc, d)); Z.markDirty(); };
+    el.onchange = () => { if (el.hasAttribute('aria-invalid')) toast(`Scores run 1 to 10. ${el.value} was not saved.`, true); };
+  });
   const lines = (obj) => Object.entries(obj || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
   const unlines = (s) => Object.fromEntries(String(s || '').split('\n').map((l) => l.split(':')).filter((p) => p.length > 1 && p[0].trim()).map(([k, ...v]) => [Cat.slug(k.trim()), v.join(':').trim()]));
   const f = (path, label, obj, o = {}) => {
