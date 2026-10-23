@@ -81,10 +81,13 @@
   /* ---------- catalog page frame ---------- */
   let SUB = 'grinders';
   function nav(sub) { SUB = sub; Z.setUrl('catalog', sub); render(); }
+  // returns false when nothing was saved, so the page keeps what is on screen
   async function saveCat() {
+    const bad = $('[data-sc][aria-invalid]');
+    if (bad) { bad.focus(); toast('Not saved. Scores run 1 to 10: fix the boxes in red first.', true); return false; }
     const btns = $$('#sb-save, #csave'); btns.forEach((b) => { b.disabled = true; });
-    try { await Z.saveCatalog(A.cat); A.catSaved = clone(A.cat); A.catIsSaved = true; Z.clean(); toast('Catalog saved. The store updates within a minute.'); if (typeof afterSave === 'function') afterSave(); }
-    catch (e) { toast('Not saved: ' + e.message, true); } finally { btns.forEach((b) => { b.disabled = false; }); }
+    try { await Z.saveCatalog(A.cat); A.catSaved = clone(A.cat); A.catIsSaved = true; Z.clean(); toast('Catalog saved. The store updates within a minute.'); if (typeof afterSave === 'function') afterSave(); return true; }
+    catch (e) { toast('Not saved: ' + e.message, true); return false; } finally { btns.forEach((b) => { b.disabled = false; }); }
   }
   function discardCat() { A.cat = clone(A.catSaved); Z.clean(); render(); }
   function showCatalog(sub) {
@@ -348,7 +351,7 @@
   }
   async function showGuides(sub) {
     const C = A.cat, size = C.sizes.find((s) => s.key === sub) || C.sizes[0] || {}, sz = size.key;
-    A.onSave = async () => { await saveCat(); showGuides(sz); }; A.onDiscard = () => { A.cat = clone(A.catSaved); Z.clean(); showGuides(sz); };
+    A.onSave = async () => { if (await saveCat()) showGuides(sz); }; A.onDiscard = () => { A.cat = clone(A.catSaved); Z.clean(); showGuides(sz); };
     const bs = C.burrs.filter((b) => b.size === sz), gs = C.grinders.filter((g) => g.size === sz);
     body().innerHTML = head('Burr guides', 'One guide per burr size. Fit scores decide how the Burr Guide ranks burrs on the Burr Guide page and in "Help me choose" in every builder on that size.', '<button class="btn primary" id="gsave">Save</button>') + `
       <div class="tabs" role="tablist">${C.sizes.map((s) => `<button role="tab" data-gs="${esc(s.key)}" aria-selected="${s.key === sz}">${esc(s.name)} <span class="cnt">${C.burrs.filter((b) => b.size === s.key && !b.hidden).length}</span></button>`).join('')}<button class="addtab" id="addsize">+ Burr size</button></div>
@@ -361,7 +364,7 @@
         <td><label class="switch"><input type="checkbox" data-hid ${b.hidden ? '' : 'checked'} aria-label="Show ${esc(b.name)}"></label></td></tr>`).join('') || `<tr><td colspan="${COLS.length + 3}" class="empty">No burrs in this size yet. Add one, or add a variant to the burr product in Shopify.</td></tr>`}
       </tbody></table></div></div>
       <div class="pv"><div class="pvh"><b>Live preview</b><span><button class="btn sm" id="gpv">Refresh preview</button></span></div><div class="pvb guidepv" id="gprev"></div></div>` : '<div class="card empty">No burr sizes yet. Add one with + Burr size.</div>'}`;
-    $('#gsave').onclick = async () => { await saveCat(); showGuides(sz); };
+    $('#gsave').onclick = async () => { if (await saveCat()) showGuides(sz); };
     $$('[data-gs]').forEach((b) => { b.onclick = () => { Z.setUrl('guides', b.dataset.gs); showGuides(b.dataset.gs); }; });
     $('#addsize').onclick = () => {
       const name = (prompt('New burr size, such as 98mm') || '').trim(); if (!name) return;
