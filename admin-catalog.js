@@ -11,6 +11,12 @@
   /* ---------- path helpers and a small form binder ---------- */
   const getP = (o, p) => p.split('.').reduce((x, k) => (x == null ? x : x[k]), o);
   const setP = (o, p, v) => { const ks = p.split('.'); let x = o; ks.slice(0, -1).forEach((k) => { if (x[k] == null || typeof x[k] !== 'object') x[k] = {}; x = x[k]; }); x[ks[ks.length - 1]] = v; };
+  // fit scores show 1 to 10 here; the catalog keeps the guide's own scale (0 to 3, bonuses -4.5 to 4.5), so the ranking never changes
+  const isBonus = (p) => p === 'fit.processed' || p === 'fit.forgiving';
+  const toTen = (p, v) => (v == null ? '' : Math.round((isBonus(p) ? v + 5.5 : 1 + v * 3) * 10) / 10);
+  const fromTen = (p, d) => (isBonus(p) ? d - 5.5 : (d - 1) / 3);
+  const scoreIn = (b, p, attrs) => `<input type="number" step="0.5" min="1" max="10" data-sc="${p}" value="${toTen(p, getP(b, p))}" ${attrs}>`;
+  const bindScores = (box, b) => $$('[data-sc]', box).forEach((el) => { el.oninput = () => { const d = parseFloat(el.value); if (isNaN(d)) return; setP(b, el.dataset.sc, fromTen(el.dataset.sc, Math.min(10, Math.max(1, d)))); Z.markDirty(); }; });
   const lines = (obj) => Object.entries(obj || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
   const unlines = (s) => Object.fromEntries(String(s || '').split('\n').map((l) => l.split(':')).filter((p) => p.length > 1 && p[0].trim()).map(([k, ...v]) => [Cat.slug(k.trim()), v.join(':').trim()]));
   const f = (path, label, obj, o = {}) => {
@@ -233,7 +239,7 @@
     cbody().innerHTML = `<div class="tabs sm">${C.sizes.map((s) => `<button data-sz="${esc(s.key)}" aria-selected="${s.key === sz}">${esc(s.name)}</button>`).join('')}<button class="addtab" data-newsize>+ Burr size</button></div>
       <div class="card flush"><table class="list"><thead><tr><th></th><th>Burr</th><th>Matches</th><th>Style</th><th>Espresso</th><th>Pour over</th><th>Show</th></tr></thead><tbody>
       ${bs.map((b) => `<tr class="clk" data-b="${esc(b.key)}"><td>${img(b.image)}</td><td><b>${esc(b.name)}</b> <span class="badge">${esc(b.short || '')}</span></td><td class="muted">${b.variant ? 'Variant ' + num(b.variant) : esc(b.code ? 'Name has ' + b.code.replace(/\\/g, '') : 'Name')}</td>
-        <td>${esc((b.builder || {}).style || b.style || '')}</td><td>${getP(b, 'fit.m.espresso') ?? ''}</td><td>${getP(b, 'fit.m.filter') ?? ''}</td><td>${b.hidden ? 'Hidden' : 'Shown'}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No burrs in this size yet.</td></tr>'}
+        <td>${esc((b.builder || {}).style || b.style || '')}</td><td>${toTen('fit.m.espresso', getP(b, 'fit.m.espresso'))}</td><td>${toTen('fit.m.filter', getP(b, 'fit.m.filter'))}</td><td>${b.hidden ? 'Hidden' : 'Shown'}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No burrs in this size yet.</td></tr>'}
       </tbody></table></div><button class="btn primary" id="addb">Add burr</button>`;
     $$('[data-sz]').forEach((b) => { b.onclick = () => nav('burrs/' + b.dataset.sz); });
     $('[data-newsize]').onclick = () => { const name = (prompt('New burr size, such as 98mm') || '').trim(); if (!name) return; const key = Cat.slug(name); if (!keyOk(key) || C.sizes.some((x) => x.key === key)) return toast('That size already exists.', true); C.sizes.push({ key, name, products: [], desc: '', pair: null }); Z.markDirty(); nav('sizes/' + key); };
@@ -247,7 +253,7 @@
   function burrForm(size, key) {
     const C = A.cat, b = C.burrs.find((x) => x.size === size && x.key === key);
     if (!b) return nav('burrs/' + size);
-    const sc = (p, l) => f(p, l, b, { type: 'number', step: '0.5' });
+    const sc = (p, l) => { const id = 'c-' + p.replace(/\./g, '-'); return `<div class="field"><label for="${id}">${l}</label>${scoreIn(b, p, `id="${id}"`)}</div>`; };
     cbody().innerHTML = `${backTo('burrs/' + size, size + ' burrs')}<div class="grid"><div>
       <div class="card"><h2>${esc(b.name)}</h2>${f('hidden', 'Show this burr', b, { type: 'checkbox', invert: true })}
         <div class="row2">${f('name', 'Name', b)}${f('short', 'Short name', b, { help: 'On the burr arc and chips.' })}</div>
@@ -256,7 +262,7 @@
         <div class="field"><label>Cut-out photo</label><div class="inrow">${img(b.image)} ${uploadBtn('image')} <span class="help">A transparent PNG, burr seen from above. Without one the store shows a stand-in ring.</span></div></div></div>
       <div class="card"><h2>In the builder</h2><div class="row2">${f('builder.style', 'Best for', b)}${f('builder.taste', 'Taste', b)}</div><div class="row2">${f('builder.roast', 'Roasts', b)}${f('builder.coating', 'Coating', b)}</div></div>
     </div><div>
-      <div class="card"><h2>Burr Guide fit</h2><p class="sub">Scores run 0 to 3. Brew method counts most, then taste, then roast. Processed and easy dial-in are bonuses or penalties, usually -3 to 2.</p>
+      <div class="card"><h2>Burr Guide fit</h2><p class="sub">Scores run 1 to 10. Brew method counts most, then taste, then roast. Processed and easy dial-in are bonuses or penalties: 5.5 is neutral, higher helps, lower hurts.</p>
         <h4 class="h4">Brew method</h4><div class="fitg">${sc('fit.m.espresso', 'espresso')}${sc('fit.m.filter', 'pour over')}${sc('fit.m.both', 'both')}${sc('fit.m.turbo', 'turbo')}</div>
         <h4 class="h4">Taste</h4><div class="fitg">${sc('fit.t.clarity', 'clarity')}${sc('fit.t.sweet', 'sweetness')}${sc('fit.t.body', 'body')}</div>
         <h4 class="h4">Roast and extras</h4><div class="fitg">${sc('fit.r.light', 'light')}${sc('fit.r.medium', 'medium')}${sc('fit.r.dark', 'dark')}<span></span>${sc('fit.processed', 'processed coffees')}${sc('fit.forgiving', 'easy dial-in')}</div></div>
@@ -266,7 +272,7 @@
           ${['clarity', 'sweet', 'body'].map((k) => f('tp.' + k, 'Taste: ' + k, b, { type: 'textarea', rows: 2 })).join('')}${['light', 'medium', 'dark'].map((k) => f('r.' + k, 'Roast: ' + k, b, { type: 'textarea', rows: 2 })).join('')}</details></div>
       <div class="card"><button class="btn danger" id="delb">Delete burr</button></div>
     </div></div>`;
-    bindBack(); bind(cbody(), b); bindUploads(cbody(), b);
+    bindBack(); bind(cbody(), b); bindScores(cbody(), b); bindUploads(cbody(), b);
     $('#delb').onclick = () => { if (!confirm(`Delete ${b.name}?`)) return; C.burrs = C.burrs.filter((x) => x !== b); Z.markDirty(); nav('burrs/' + size); };
   }
 
@@ -346,8 +352,8 @@
         <div class="card"><h2>Grinders on ${esc(size.name)} burrs</h2>${gs.length ? gs.map((g) => `<div class="field"><label for="gd-${esc(g.key)}">${esc(g.name)}: line under its card</label><input type="text" id="gd-${esc(g.key)}" data-gd="${esc(g.key)}" value="${esc((g.guide || {}).desc || '')}"></div>`).join('') : '<p class="muted">No grinder uses this size yet, so its guide does not show on the store. Set a grinder\'s burr size in Catalog > Grinders.</p>'}</div>
         <div class="card"><h2>Burr products</h2><p class="sub">Prices and stock come from ${(size.products || []).length ? esc(size.products.join(', ')) : 'no product yet'}. A new variant on ${(size.products || []).length > 1 ? 'these products' : 'this product'} shows up below, ready to add.</p><button class="btn sm" id="sizeedit">Edit ${esc(size.name)} burr size</button><div id="newvars"><span class="spin"></span></div></div>
       </div>
-      <div class="card flush"><div class="cardhead"><div><h2>Burrs and fit scores</h2><p class="sub" style="margin:0">Scores run 0 to 3. Drag the handle to set the order from more clarity to more texture. Click a burr to edit its photo and copy.</p></div><button class="btn primary sm" id="addburr">Add burr</button></div><div class="scroll"><table class="list mat"><thead><tr><th class="drag" aria-label="Order"></th><th>Burr</th>${COLS.map(([, n]) => `<th>${n}</th>`).join('')}<th>Show</th></tr></thead><tbody>
-      ${bs.map((b) => `<tr data-b="${esc(b.key)}" class="${b.hidden ? 'hid' : ''}"><td class="drag"><button type="button" class="handle" data-drag aria-label="Drag ${esc(b.name)} to reorder" title="Drag to reorder">&#8942;&#8942;</button></td><td><a class="bname" href="#" data-ed="${esc(b.key)}">${img(b.image)}<span>${esc(b.name)}</span></a></td>${COLS.map(([p]) => `<td><input type="number" step="0.5" min="-4" max="3" data-sc="${p}" value="${getP(b, p) ?? ''}" aria-label="${esc(b.name)} ${p}"></td>`).join('')}
+      <div class="card flush"><div class="cardhead"><div><h2>Burrs and fit scores</h2><p class="sub" style="margin:0">Scores run 1 to 10. For Processed and Easy dial-in, 5.5 is neutral. Drag the handle to set the order from more clarity to more texture. Click a burr to edit its photo and copy.</p></div><button class="btn primary sm" id="addburr">Add burr</button></div><div class="scroll"><table class="list mat"><thead><tr><th class="drag" aria-label="Order"></th><th>Burr</th>${COLS.map(([, n]) => `<th>${n}</th>`).join('')}<th>Show</th></tr></thead><tbody>
+      ${bs.map((b) => `<tr data-b="${esc(b.key)}" class="${b.hidden ? 'hid' : ''}"><td class="drag"><button type="button" class="handle" data-drag aria-label="Drag ${esc(b.name)} to reorder" title="Drag to reorder">&#8942;&#8942;</button></td><td><a class="bname" href="#" data-ed="${esc(b.key)}">${img(b.image)}<span>${esc(b.name)}</span></a></td>${COLS.map(([p]) => `<td>${scoreIn(b, p, `aria-label="${esc(b.name)} ${p}"`)}</td>`).join('')}
         <td><label class="switch"><input type="checkbox" data-hid ${b.hidden ? '' : 'checked'} aria-label="Show ${esc(b.name)}"></label></td></tr>`).join('') || `<tr><td colspan="${COLS.length + 3}" class="empty">No burrs in this size yet. Add one, or add a variant to the burr product in Shopify.</td></tr>`}
       </tbody></table></div></div>
       <div class="pv"><div class="pvh"><b>Live preview</b><span><button class="btn sm" id="gpv">Refresh preview</button></span></div><div class="pvb guidepv" id="gprev"></div></div>` : '<div class="card empty">No burr sizes yet. Add one with + Burr size.</div>'}`;
@@ -402,7 +408,7 @@
     });
     $$('tr[data-b]').forEach((tr) => {
       const b = bs.find((x) => x.key === tr.dataset.b);
-      $$('[data-sc]', tr).forEach((el) => { el.oninput = () => { setP(b, el.dataset.sc, parseFloat(el.value) || 0); Z.markDirty(); }; });
+      bindScores(tr, b);
       $('[data-hid]', tr).onchange = (e) => { b.hidden = !e.target.checked; tr.classList.toggle('hid', b.hidden); Z.markDirty(); };
     });
     $$('[data-ed]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); Z.go('catalog', `burrs/${sz}/${a.dataset.ed}`); }; });
