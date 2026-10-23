@@ -474,17 +474,23 @@
     /* a new finish changes the accent's lip and the cap with the same wipe that passes over the photo, not a crossfade.
        The photo's wipe is a 230% wide mask sliding across the whole frame; here it is the same wipe in this canvas's own box. */
     coatSwap(front, back, p, since) {
-      const L = p[0] / 100, w = p[2] / 100, k = 1 - 2.3 / w;
-      back.style.setProperty('--zb-msize', `${230 / w}% 100%`);
-      back.style.setProperty('--zb-mfrom', `${((-1.3 - L) / w / k) * 100}% 0`);
-      back.style.setProperty('--zb-mto', `${(-L / w / k) * 100}% 0`);
-      back.style.animationDelay = `${-since}ms`;
-      clearTimeout(back.coatT);
-      back.classList.remove('coat'); back.style.transition = 'none'; back.style.zIndex = '5'; back.style.opacity = '1';
-      void back.offsetWidth; back.classList.add('coat');
+      // the same wipe in a canvas's own box. The new piece wipes in; the old one wipes out under the same edge, so an
+      // old piece that sits elsewhere in the other color's photo never shows over the new photo
+      const wipe = (el, q, cls) => {
+        const L = q[0] / 100, w = q[2] / 100, k = 1 - 2.3 / w;
+        el.style.setProperty('--zb-msize', `${230 / w}% 100%`);
+        el.style.setProperty('--zb-mfrom', `${((-1.3 - L) / w / k) * 100}% 0`);
+        el.style.setProperty('--zb-mto', `${(-L / w / k) * 100}% 0`);
+        el.style.animationDelay = `${-since}ms`; el.style.transition = 'none';
+        el.classList.remove('coat', 'coat-out'); void el.offsetWidth; el.classList.add(cls);
+      };
+      clearTimeout(back.coatT); clearTimeout(front.coatT);
+      back.style.zIndex = '5'; back.style.opacity = '1'; wipe(back, p, 'coat');
+      if (front.style.opacity !== '0' && front.style.width) wipe(front, ['left', 'top', 'width', 'height'].map((k) => parseFloat(front.style[k])), 'coat-out');
       back.coatT = setTimeout(() => {
-        front.style.transition = 'none'; front.style.opacity = '0';
-        back.classList.remove('coat'); back.style.zIndex = ''; back.style.animationDelay = '';
+        front.style.opacity = '0';
+        [front, back].forEach((e) => { e.classList.remove('coat', 'coat-out'); e.style.animationDelay = ''; });
+        back.style.zIndex = '';
         requestAnimationFrame(() => { front.style.transition = ''; back.style.transition = ''; });
       }, Math.max(0, 1650 - since));
     }
@@ -650,10 +656,11 @@
     }
     flyEl(spec, rect) {
       let f;
-      if (spec.tex) { f = document.createElement('div'); f.style.cssText = this.texStyle(spec.tex, spec.crop) + ';background-repeat:no-repeat;background-position:center'; }
+      if (spec.canvas) { f = document.createElement('canvas'); f.width = spec.canvas.width; f.height = spec.canvas.height; f.getContext('2d').drawImage(spec.canvas, 0, 0); }
+      else if (spec.tex) { f = document.createElement('div'); f.style.cssText = this.texStyle(spec.tex, spec.crop) + ';background-repeat:no-repeat;background-position:center'; }
       else { f = document.createElement('img'); f.src = spec.src; f.alt = ''; }
       f.className = 'zb-fly';
-      Object.assign(f.style, { left: rect.left + 'px', top: rect.top + 'px', width: rect.width + 'px', height: rect.height + 'px', borderRadius: '50%' });
+      Object.assign(f.style, { left: rect.left + 'px', top: rect.top + 'px', width: rect.width + 'px', height: rect.height + 'px', borderRadius: spec.canvas ? '0' : '50%' });
       document.body.appendChild(f);
       const r = f.getBoundingClientRect(); // correct for transformed ancestors
       if (Math.abs(r.left - rect.left) > 1 || Math.abs(r.top - rect.top) > 1) { f.style.left = (2 * rect.left - r.left) + 'px'; f.style.top = (2 * rect.top - r.top) + 'px'; }
@@ -662,16 +669,42 @@
     fly(spec, fr, tr, { spin = 0, tilt = 0, end = 0.25, dur = 1050 } = {}) {
       if (this.reduce || !fr || !tr) return Promise.resolve();
       return new Promise((res) => {
-        const f = this.flyEl(spec, fr);
-        const dx = (tr.left + tr.width / 2) - (fr.left + fr.width / 2), dy = (tr.top + tr.height / 2) - (fr.top + fr.height / 2), sc = tr.height / fr.height;
+        // drawn at the size it lands at and shrunk to where it starts, so it is never enlarged (enlarging blurs it)
+        const f = this.flyEl(spec, tr);
+        const dx = (fr.left + fr.width / 2) - (tr.left + tr.width / 2), dy = (fr.top + fr.height / 2) - (tr.top + tr.height / 2), s0 = fr.height / tr.height;
         const a = f.animate([
-          { transform: 'translate(0,0) scale(1) rotate(0deg)', opacity: 1, filter: 'drop-shadow(0 18px 18px rgba(0,0,0,.6))' },
-          { transform: `translate(${dx * 0.55}px,${dy * 0.55 - 40}px) scale(${(1 + sc) / 2 * 1.08}) rotate(${spin * 0.6}deg)`, opacity: 1, offset: 0.5 },
-          { transform: `translate(${dx}px,${dy}px) perspective(600px) rotateY(${tilt}deg) scale(${sc}) rotate(${spin}deg)`, opacity: 1, offset: 0.82 },
-          { transform: `translate(${dx}px,${dy}px) perspective(600px) rotateY(${tilt}deg) scale(${sc * end}) rotate(${spin + 90}deg)`, opacity: end >= 1 ? 1 : 0, filter: 'drop-shadow(0 0 0 rgba(0,0,0,0))' }
+          { transform: `translate(${dx}px,${dy}px) scale(${s0}) rotate(0deg)`, opacity: 1, filter: 'drop-shadow(0 18px 18px rgba(0,0,0,.6))' },
+          { transform: `translate(${dx * 0.45}px,${dy * 0.45 - 40}px) scale(${(1 + s0) / 2 * 1.08}) rotate(${spin * 0.6}deg)`, opacity: 1, offset: 0.5 },
+          { transform: `translate(0px,0px) perspective(600px) rotateY(${tilt}deg) scale(1) rotate(${spin}deg)`, opacity: 1, offset: 0.82 },
+          { transform: `translate(0px,0px) perspective(600px) rotateY(${tilt}deg) scale(${end}) rotate(${spin + 90}deg)`, opacity: end >= 1 ? 1 : 0, filter: 'drop-shadow(0 0 0 rgba(0,0,0,0))' }
         ], { duration: dur, easing: 'cubic-bezier(.6,.05,.3,1)', fill: 'forwards' });
         a.onfinish = () => { f.remove(); res(); };
       });
+    }
+    /* the chosen accent piece: drawn first, exactly as it will sit on the grinder, then that very picture flies from the
+       swatch onto its place. Nothing is enlarged, so it stays sharp, and it lands where the real piece appears. */
+    async flyAccent(acc, fr) {
+      const a = this.art(), g = a && a.geom, kp = g && g.knobPos;
+      if (!acc || !kp || !g.knob || !a.urls.knobD) return;
+      const A = this.q('knobA'), B = this.q('knobB'), front = A.style.opacity === '0' ? B : A, back = front === A ? B : A, key = [a.slug, acc.id].join(':');
+      if (front.dataset.key === key && front.style.opacity !== '0') return;
+      const p = [kp[0] - kp[2] * KNOB_PAD, kp[1] - kp[3] * KNOB_PAD, kp[2] * (1 + 2 * KNOB_PAD), kp[3] * (1 + 2 * KNOB_PAD)];
+      back.style.transition = 'none'; back.style.opacity = '0'; this.pos(back, p); back.dataset.key = key;
+      try { await this.drawKnob(back, a, acc); } catch (e) { console.warn('[Zerno builder]', e); return; }
+      if (back.dataset.key !== key) return;
+      const land = () => { back.style.opacity = '1'; front.style.transition = 'none'; front.style.opacity = '0';
+        requestAnimationFrame(() => { back.style.transition = ''; front.style.transition = ''; }); };
+      if (this.reduce || !fr) { land(); return; }
+      const tr = back.getBoundingClientRect(), f = this.flyEl({ canvas: back }, tr), k = this.knobRect();
+      // start: the face (not the padded canvas) the size of the swatch
+      const dx = (fr.left + fr.width / 2) - (k.left + k.width / 2), dy = (fr.top + fr.height / 2) - (k.top + k.height / 2), s0 = fr.width / k.width;
+      f.style.transformOrigin = `${((k.left + k.width / 2 - tr.left) / tr.width) * 100}% ${((k.top + k.height / 2 - tr.top) / tr.height) * 100}%`;
+      await f.animate([
+        { transform: `translate(${dx}px,${dy}px) scale(${s0})`, filter: 'drop-shadow(0 18px 18px rgba(0,0,0,.55))' },
+        { transform: `translate(${dx * 0.4}px,${dy * 0.4 - 36}px) scale(${(1 + s0) / 2 * 1.06})`, offset: 0.55 },
+        { transform: 'translate(0px,0px) scale(1)', filter: 'drop-shadow(0 0 0 rgba(0,0,0,0))' }
+      ], { duration: 800, easing: 'cubic-bezier(.6,.05,.3,1)', fill: 'forwards' }).finished.catch(() => {});
+      land(); requestAnimationFrame(() => f.remove());
     }
     // the front assembly opens (Z2: dial and accent piece hinge about 25 degrees; Z1: housing and chute slide out along the crease),
     // the burr drops into the grind chamber through the gap, and the front swings shut
@@ -918,7 +951,7 @@
       const a = this.accent(id), fr = disc.getBoundingClientRect(), dup = S.accSpare.includes(id);
       S.accent = id; S.accSpare = S.accSpare.filter((z) => z !== id); this.save();
       this.renderSwatches(); this.update(false);
-      await this.fly({ tex: a.image, crop: this.C.settings.accentCrop }, fr, this.knobRect(), { tilt: -34, end: 1, dur: 800 });
+      await this.flyAccent(a, fr);
       this.renderRig(); this.pulse();
       this.chip(`<b>${esc(a.title)}</b> accent piece${dup ? ' moved from extras to the grinder' : ''}`);
     }
@@ -931,7 +964,7 @@
         const c = this.cap(id), capEl = [this.q('capA'), this.q('capB'), this.q('capNone')].find((e) => e.style.opacity !== '0');
         if (capEl && this.art()) {
           const r = capEl.getBoundingClientRect();
-          await this.fly({ tex: c.image, crop: this.C.settings.capCrop }, disc.getBoundingClientRect(), { left: r.left + r.width * 0.1, top: r.top - r.width * 0.4, width: r.width * 0.8, height: r.width * 0.8 }, { end: 0.3, dur: 750 });
+          await this.fly({ tex: c.hi || c.image, crop: this.C.settings.capCrop }, disc.getBoundingClientRect(), { left: r.left + r.width * 0.1, top: r.top - r.width * 0.4, width: r.width * 0.8, height: r.width * 0.8 }, { end: 0.3, dur: 750 });
         }
         this.renderRig(); this.chip(`<b>${esc(c.title)}</b> funnel cap${dup ? ' moved from extras to the grinder' : ''}`);
       } else { this.renderRig(); this.chip(hadExtras ? 'Funnel cap and extra caps removed' : 'Funnel cap removed'); }
@@ -982,7 +1015,7 @@
       const idx = this.spareItems().findIndex(([k, v]) => k === kind && v === id), slot = this.q('tray2Slots').children[idx];
       if (slot) {
         slot.style.opacity = '0';
-        await this.fly({ tex: x.image, crop: kind === 'acc' ? this.C.settings.accentCrop : this.C.settings.capCrop }, fr, slot.getBoundingClientRect(), { spin: 180, end: 1, dur: 800 });
+        await this.fly({ tex: x.hi || x.image, crop: kind === 'acc' ? this.C.settings.accentCrop : this.C.settings.capCrop }, fr, slot.getBoundingClientRect(), { spin: 180, end: 1, dur: 800 });
         slot.style.opacity = '1';
       }
       this.chip(`Extra <b>${esc(x.title)}</b> ${noun} added · ${this.money(x.price)}`);
@@ -1037,14 +1070,16 @@
     /* ---------- totals and cart ---------- */
     lines(build) {
       const S = this.S, v = this.variant(), L = [];
-      const P = (fit) => (fit ? { Build: build, Fitting: fit } : { Build: build });
-      L.push({ id: v.id, t: this.C.grinder.title.replace(/\s+-\s+.*$/, ''), s: v.title, p: v.price, props: P() });
-      S.burrs.forEach((id, i) => { const b = this.burr(id); L.push({ id, t: b.name + ' burrs', s: i === 0 ? 'Installed at the factory' : 'Spare set, ships in the box', p: b.price, props: P(i === 0 ? 'Install in grinder' : 'Spare set, in the box') }); });
+      // _zb (hidden in the cart and at checkout): the grinder, and the burr set and accent piece it must keep (the cart
+      // guard app embed locks those two). Parts on the grinder are nested under it, so they leave with it.
+      const P = (fit, zb) => ({ Build: build, ...(fit ? { Fitting: fit } : {}), ...(zb ? { _zb: zb } : {}) });
+      L.push({ id: v.id, t: this.C.grinder.title.replace(/\s+-\s+.*$/, ''), s: v.title, p: v.price, props: P('', 'grinder') });
+      S.burrs.forEach((id, i) => { const b = this.burr(id); L.push({ id, t: b.name + ' burrs', s: i === 0 ? 'Installed at the factory' : 'Spare set, ships in the box', p: b.price, props: P(i === 0 ? 'Install in grinder' : 'Spare set, in the box', i === 0 ? 'required' : ''), nest: i === 0 }); });
       const a = this.accent(S.accent);
-      if (a) L.push({ id: a.id, t: a.title + ' accent piece', s: 'On the grinder', p: a.price, props: P('On the grinder') });
+      if (a) L.push({ id: a.id, t: a.title + ' accent piece', s: 'On the grinder', p: a.price, props: P('On the grinder', 'required'), nest: true });
       S.accSpare.forEach((id) => { const x = this.accent(id); L.push({ id, t: x.title + ' accent piece', s: 'Extra, ships in the box', p: x.price, props: P('Extra piece, in the box') }); });
       const c = S.cap !== 'none' && this.cap(S.cap);
-      if (c) L.push({ id: c.id, t: c.title + ' funnel cap', s: 'On the grinder', p: c.price, props: P('On the grinder') });
+      if (c) L.push({ id: c.id, t: c.title + ' funnel cap', s: 'On the grinder', p: c.price, props: P('On the grinder'), nest: true });
       S.capSpare.forEach((id) => { const x = this.cap(id); L.push({ id, t: x.title + ' funnel cap', s: 'Extra, ships in the box', p: x.price, props: P('Extra piece, in the box') }); });
       this.accs.filter((x) => S.acc.includes(x.productId)).forEach((x) => L.push({ id: x.variantId, t: x.title, s: x.variantTitle && x.variantTitle !== 'Default Title' ? x.variantTitle : '', p: x.price, props: P() }));
       return L;
@@ -1071,11 +1106,15 @@
       if (this.C.preview) { this.chip('Preview only. Add to cart works on the store.'); return; }
       if (this.adding) return;
       const build = String(this.C.buildPrefix || this.C.model || 'ZB').toUpperCase() + '-' + Date.now().toString(36).toUpperCase().slice(-6);
-      const items = this.lines(build).map((l) => ({ id: l.id, quantity: 1, properties: l.props }));
+      const gid = this.variant().id;
+      const items = this.lines(build).map((l) => ({ id: l.id, quantity: 1, properties: l.props, ...(l.nest ? { parent_id: gid } : {}) }));
       const msg = this.q('msg');
       this.adding = true; this.b('next').textContent = 'Adding…'; this.b('next').disabled = true;
       try {
-        const res = await fetch(this.C.shop.cartAddUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ items }) });
+        const post = (list) => fetch(this.C.shop.cartAddUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ items: list }) });
+        let res = await post(items);
+        // a store that cannot nest lines (for example with the Script Editor) still gets every part, side by side
+        if (!res.ok && items.some((i) => i.parent_id)) res = await post(items.map(({ parent_id, ...i }) => i));
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.description || data.message || 'The cart could not be updated.');
         document.dispatchEvent(new CustomEvent('zerno:builder:added', { detail: { build, items } }));
