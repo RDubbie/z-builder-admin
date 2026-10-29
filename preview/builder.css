@@ -133,6 +133,7 @@
 .zb-prop{position:absolute;transition:opacity .6s ease,transform .8s var(--zb-ease);opacity:0;transform:translateY(4%) scale(.96)}
 .zb-prop.on{opacity:1;transform:none}
 .zb-prop img{width:100%;display:block;filter:drop-shadow(0 2cqw 2cqw rgba(0,0,0,.5))}
+.zb-prop.h img{width:auto;height:100%;filter:drop-shadow(0 1cqw 1.2cqw rgba(0,0,0,.55))}
 .zb-prop.incl img{filter:drop-shadow(0 1cqw 1.2cqw rgba(0,0,0,.55))}
 .zb-incl{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 20px}
 .zb-incl div{border:1px solid var(--zb-line);border-radius:6px;padding:10px 8px 8px;display:grid;justify-items:center;gap:6px;text-align:center}

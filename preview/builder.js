@@ -16,7 +16,8 @@
   const STAGE_NOTES = ['Your grinder', 'Burr choices', 'Accent piece & funnel cap', 'Accessories'];
   // stage % placement of the grinder for each step
   const RIG = [{ h: 80, cx: 50, top: 10 }, { h: 52, cx: 50, top: 44 }, { h: 150, left: 7, top: 4 }, { h: 60, cx: 52, top: 27 }];
-  const PROP_SLOTS = [{ left: '-2%', width: '57%', bottom: '14%' }, { left: '5%', width: '20%', bottom: '6%', zIndex: 2 }];
+  // the third spot is sized by height (a small part); accessories in one pick-one group share a spot
+  const PROP_SLOTS = [{ left: '-2%', width: '57%', bottom: '14%' }, { left: '5%', width: '20%', bottom: '6%', zIndex: 2 }, { left: '27%', height: '10%', bottom: '6%', zIndex: 4, front: true }];
   // included items laid out on the right side of the grinder on the accessories step
   const INCLUDED_SLOTS = { spray: { left: '76%', width: '5.6%', bottom: '21%' }, tools: { left: '82%', width: '15%', bottom: '19%' }, brush: { left: '61%', width: '30%', bottom: '13%', zIndex: 2 } };
 
@@ -279,6 +280,7 @@
     /* ---------- DOM ---------- */
     render() {
       const C = this.C, st = C.settings;
+      this.stepsHtml = this.sumHtml = null;                 // fresh DOM: draw the steps and the summary again
       const finishes = [...new Set(C.grinder.variants.map((v) => v.options[this.ci]))];
       const artSlugs = [...new Set(C.grinder.variants.map((v) => this.finishSlug(v)))].filter((s) => C.art[s] && this.AG[s]);
       this.root.innerHTML = `
@@ -448,7 +450,8 @@
     }
     renderSteps() {
       const S = this.S;
-      this.q('steps').innerHTML = this.shown.map((i, n) => `<li><button type="button" data-i="${i}" ${i > S.seen ? 'disabled' : ''} class="${i !== S.step && i <= S.seen && this.stepReady(i) ? 'done' : ''}" ${i === S.step ? 'aria-current="step"' : ''}><span class="n">${n + 1}</span><span class="lbl">${this.T.steps[i]}</span></button></li>`).join('');
+      const html = this.shown.map((i, n) => `<li><button type="button" data-i="${i}" ${i > S.seen ? 'disabled' : ''} class="${i !== S.step && i <= S.seen && this.stepReady(i) ? 'done' : ''}" ${i === S.step ? 'aria-current="step"' : ''}><span class="n">${n + 1}</span><span class="lbl">${this.T.steps[i]}</span></button></li>`).join('');
+      if (this.stepsHtml !== html) { this.q('steps').innerHTML = html; this.stepsHtml = html; }
       this.root.querySelectorAll('.zb-rail section').forEach((sec) => { const e = sec.querySelector('.zb-eyebrow'), k = this.shown.indexOf(+sec.dataset.step); if (e && k >= 0) e.textContent = `Step ${k + 1} of ${this.shown.length}`; });
       this.q('steps').querySelectorAll('button').forEach((b) => { b.onclick = () => this.go(+b.dataset.i); });
     }
@@ -1065,16 +1068,22 @@
 
     /* ---------- step 4: accessories ---------- */
     buildProps() {
-      const props = this.q('props'); let slotN = 0;
+      const props = this.q('props'), groupSlot = {}; let slotN = 0;
       this.accs.forEach((a) => {
-        const srcs = [a.stage, a.stageAsset].filter(Boolean);
-        if (!srcs.length || slotN >= PROP_SLOTS.length) return;
-        const d = document.createElement('div');
-        d.className = 'zb-prop'; d.dataset.pid = a.productId;
-        Object.assign(d.style, PROP_SLOTS[slotN++]);
+        const srcs = [a.stage, a.stageAsset].filter(Boolean), g = a.group ? String(a.group).toLowerCase() : '';
+        if (!srcs.length) return;
+        const n = g && g in groupSlot ? groupSlot[g] : slotN;
+        if (n >= PROP_SLOTS.length) return;
+        if (n === slotN) { slotN += 1; if (g) groupSlot[g] = n; }
+        const d = document.createElement('div'), { front, ...spot } = PROP_SLOTS[n];
+        d.className = 'zb-prop' + (spot.height ? ' h' : ''); d.dataset.pid = a.productId;
+        Object.assign(d.style, spot);
         const img = document.createElement('img'); img.alt = ''; let k = 0;
+        // a part lying on its side sits a little lower than one standing up
+        if (spot.height) img.onload = () => { if (img.naturalWidth > img.naturalHeight) d.style.height = (parseFloat(spot.height) * 0.8) + '%'; };
         img.onerror = () => { k += 1; if (srcs[k]) img.src = srcs[k]; else d.remove(); };
-        img.src = srcs[0]; d.appendChild(img); props.appendChild(d);
+        img.src = srcs[0]; d.appendChild(img);
+        (front ? this.q('stage') : props).appendChild(d);    // a front spot sits on the counter in front of the grinder's base
       });
       if (this.C.settings.showIncluded) (this.C.included || []).forEach((x) => {
         if (!x.name || !x.image || !INCLUDED_SLOTS[x.slot]) return;
@@ -1086,14 +1095,23 @@
     }
     accGroup(id) { const a = this.accs.find((x) => x.productId === id); return a && a.group ? String(a.group).toLowerCase() : ''; }
     renderAcc() {
-      const S = this.S;
-      this.q('accOpts').innerHTML = this.accs.map((a) => {
+      const S = this.S, box = this.q('accOpts'), btns = [...box.querySelectorAll('.zb-acc')];
+      // after the first draw only the state changes: rebuilding the list made the page (and the theme's header) jump
+      if (btns.length === this.accs.length && btns.every((b, i) => +b.dataset.id === this.accs[i].productId)) {
+        btns.forEach((b, i) => {
+          const a = this.accs[i], on = S.acc.includes(a.productId);
+          b.setAttribute('aria-pressed', String(on));
+          b.querySelector('.tog').textContent = !a.available ? 'Sold out' : on ? 'Added · tap to remove' : 'Add to build';
+        });
+        return;
+      }
+      box.innerHTML = this.accs.map((a) => {
         const on = S.acc.includes(a.productId);
         return `<button type="button" class="zb-acc" aria-pressed="${on}" data-id="${a.productId}" ${a.available ? '' : 'disabled'}>
           ${a.image ? `<img src="${esc(a.image)}" alt="">` : '<span></span>'}<span><span class="row"><span class="t">${esc(a.title)}</span><span class="num">${this.money(a.price)}</span></span>
           ${a.blurb ? `<span class="d">${esc(a.blurb)}</span>` : ''}<span class="tog">${!a.available ? 'Sold out' : on ? 'Added · tap to remove' : 'Add to build'}</span></span></button>`;
       }).join('');
-      this.q('accOpts').querySelectorAll('.zb-acc').forEach((b) => {
+      box.querySelectorAll('.zb-acc').forEach((b) => {
         b.onclick = () => {
           const id = +b.dataset.id, i = S.acc.indexOf(id);
           if (i >= 0) S.acc.splice(i, 1);
@@ -1131,8 +1149,9 @@
       this.b('v').textContent = this.money(tot);
       const inst = S.burrs[0] && this.burr(S.burrs[0]), ex = S.accSpare.length + S.capSpare.length, a = this.accent(S.accent);
       this.b('l').textContent = [v.options[this.ci], inst ? inst.short + (S.burrs.length > 1 ? ` +${S.burrs.length - 1} spare` : '') : (this.burrs.length ? 'No burrs yet' : ''), a ? a.title + (ex ? ` +${ex} extra` : '') : ''].filter(Boolean).join(' · ');
-      this.q('sum').innerHTML = L.map((l) => `<tr><td>${esc(l.t)}${l.s ? `<small>${esc(l.s)}</small>` : ''}</td><td class="num">${this.money(l.p)}</td></tr>`).join('') +
+      const sum = L.map((l) => `<tr><td>${esc(l.t)}${l.s ? `<small>${esc(l.s)}</small>` : ''}</td><td class="num">${this.money(l.p)}</td></tr>`).join('') +
         `<tr class="total"><td>Total</td><td class="num">${this.money(tot)}</td></tr>`;
+      if (this.sumHtml !== sum) { this.q('sum').innerHTML = sum; this.sumHtml = sum; }
       if (rig) this.renderRig();
       this.root.querySelectorAll('.zb-prop').forEach((d) => d.classList.toggle('on', S.step === 3 && (d.classList.contains('incl') || S.acc.includes(+d.dataset.pid))));
       this.q('tray').hidden = !(S.step === 1 && S.burrs.length > 1);
