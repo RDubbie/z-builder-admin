@@ -377,6 +377,37 @@
         this.applyMotion(); this.chip(this.reduce ? 'Animations off' : 'Animations on');
       };
       window.addEventListener('resize', () => this.renderRig(true));
+      this.watchHeader();
+    }
+
+    /* ---------- phones: the preview stays pinned at the top while the choices scroll under it ---------- */
+    phone() { return innerWidth <= 920 && this.root.clientWidth <= 920; }
+    // pin the preview right under the theme's header while it shows (Horizon hides it on the way down and shows it on the way up)
+    watchHeader() {
+      const measure = () => {
+        if (!this.phone()) return;
+        let b = 0;
+        [12, innerWidth / 2].forEach((x) => {
+          let el = document.elementFromPoint(x, 2);
+          while (el && el !== document.body && el !== document.documentElement && !this.root.contains(el)) {
+            const p = getComputedStyle(el).position;
+            if (p === 'fixed' || p === 'sticky') { const r = el.getBoundingClientRect(); if (r.top <= 2 && r.bottom > 0 && r.bottom < innerHeight * 0.3) b = Math.max(b, r.bottom); break; }
+            el = el.parentElement;
+          }
+        });
+        this.root.style.setProperty('--zb-top-m', Math.round(b) + 'px');
+      };
+      let raf = 0, late = 0;
+      const on = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(measure); clearTimeout(late); late = setTimeout(measure, 350); };
+      addEventListener('scroll', on, { passive: true }); addEventListener('resize', on); measure();
+    }
+    // a new step brings its title up to just under the pinned preview
+    toStep() {
+      if (!this.phone()) return;
+      const sec = this.root.querySelector(`.zb-rail section[data-step="${this.S.step}"]`), st = this.q('stage');
+      if (!sec) return;
+      const top = parseFloat(getComputedStyle(st).top) || 0;
+      scrollTo({ top: Math.max(0, scrollY + sec.getBoundingClientRect().top - (top + st.offsetHeight + 26)), behavior: this.reduce ? 'auto' : 'smooth' });
     }
 
     applyMotion() {
@@ -405,7 +436,7 @@
       this.placeRig();
       this.renderSteps();
       this.update();
-      if (!first && innerWidth <= 920) this.q('stage').scrollIntoView({ behavior: this.reduce ? 'auto' : 'smooth', block: 'start' });
+      if (!first) this.toStep();
     }
     renderSteps() {
       const S = this.S;

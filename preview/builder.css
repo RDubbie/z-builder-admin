@@ -51,6 +51,8 @@
 .zb-stage{position:relative;aspect-ratio:1/1;max-width:100%;width:min(100%,calc(100vh - 200px));min-width:min(100%,320px);justify-self:center;border-radius:4px;overflow:hidden;container-type:inline-size;
   background:radial-gradient(60% 55% at 50% 52%,var(--zb-glow) 0%,var(--zb-stage) 45%,color-mix(in srgb, var(--zb-stage) 55%, var(--zb-ink)) 100%)}
 @container zb (min-width:921px){.zb-stage{position:sticky;top:var(--zb-sticky,96px)}}
+/* phones and tablets (not a narrow column on a big screen, such as the admin preview): the preview stays pinned under the theme's header while the choices scroll under it; the page color fills its sides and a strip below */
+@media (max-width:920px){@container zb (max-width:920px){.zb-stage{position:sticky;top:var(--zb-top-m,0px);z-index:8;width:min(100%,40svh);min-width:0;transition:top .25s ease;box-shadow:0 0 0 50vw var(--zb-ink);clip-path:inset(0 calc((100% - 100cqw) / 2) -14px)}}}
 .zb-stage::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,transparent 78%,color-mix(in srgb, var(--zb-ink) 35%, transparent))}
 .zb-floor{position:absolute;left:0;right:0;bottom:0;height:22%;background:linear-gradient(180deg,rgba(255,255,255,0),rgba(255,255,255,.025) 40%,rgba(0,0,0,.2))}
 .zb-note{position:absolute;z-index:5;left:3.5%;top:3%;font-family:var(--zb-display);font-size:clamp(9px,1.7cqw,14px);letter-spacing:.14em;text-transform:uppercase;color:var(--zb-muted)}
@@ -226,7 +228,7 @@
 .zb-btn.primary{background:var(--zb-fg);color:var(--zb-ink);border-color:var(--zb-fg)}
 .zb-btn[disabled]{opacity:.35;cursor:not-allowed}
 .zb-fly{position:fixed;z-index:2147483000;pointer-events:none;will-change:transform;object-fit:contain}
-@container zb (max-width:520px){.zb-incl{grid-template-columns:repeat(2,minmax(0,1fr))}.zb-btn{padding:11px 16px}.zb-tot .v{font-size:19px}.zb-steps .lbl{display:none}.zb-disc{width:48px;height:48px}}
+@container zb (max-width:520px){.zb-incl{grid-template-columns:repeat(2,minmax(0,1fr))}.zb-btn{padding:11px 16px}.zb-tot .v{font-size:19px}.zb-steps button:not([aria-current]) .lbl{display:none}.zb-steps button{padding:8px 10px}.zb-disc{width:48px;height:48px}.zb-spc{padding:7px 12px 7px 7px;font-size:13px}}
 .zb-setup-note{padding:16px;border:1px dashed #999;font-size:14px}
 
 /* Theme app blocks are wrapped in .shopify-app-block; let it span the section so the builder is full width */
@@ -237,4 +239,4 @@
 
 /* the builder lays itself out by its own width (a narrow theme column, a phone, the admin preview), not the window */
 .zb{container:zb/inline-size}
-@supports not (container-type:inline-size){@media (max-width:920px){.zb-grid{grid-template-columns:minmax(0,1fr)}}@media (min-width:921px){.zb-stage{position:sticky;top:var(--zb-sticky,96px)}}@media (max-width:520px){.zb-incl{grid-template-columns:repeat(2,minmax(0,1fr))}.zb-btn{padding:11px 16px}.zb-tot .v{font-size:19px}.zb-steps .lbl{display:none}.zb-disc{width:48px;height:48px}}}
+@supports not (container-type:inline-size){@media (max-width:920px){.zb-grid{grid-template-columns:minmax(0,1fr)}.zb-stage{position:sticky;top:var(--zb-top-m,0px);z-index:8;width:min(100%,40svh);min-width:0;box-shadow:0 0 0 50vw var(--zb-ink);clip-path:inset(0 calc((100% - 100cqw) / 2) -14px)}}@media (min-width:921px){.zb-stage{position:sticky;top:var(--zb-sticky,96px)}}@media (max-width:520px){.zb-incl{grid-template-columns:repeat(2,minmax(0,1fr))}.zb-btn{padding:11px 16px}.zb-tot .v{font-size:19px}.zb-steps button:not([aria-current]) .lbl{display:none}.zb-steps button{padding:8px 10px}.zb-disc{width:48px;height:48px}.zb-spc{padding:7px 12px 7px 7px;font-size:13px}}}
