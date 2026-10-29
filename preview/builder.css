@@ -74,6 +74,8 @@
 .zb-photo.coat{-webkit-mask-image:linear-gradient(90deg,#000 0 44%,transparent 56% 100%);mask-image:linear-gradient(90deg,#000 0 44%,transparent 56% 100%);
   -webkit-mask-size:230% 100%;mask-size:230% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;animation:zb-coat 1.6s cubic-bezier(.45,.05,.35,1) forwards}
 @keyframes zb-coat{from{-webkit-mask-position:100% 0;mask-position:100% 0}to{-webkit-mask-position:0 0;mask-position:0 0}}
+.zb-photo.coat-out{-webkit-mask-image:linear-gradient(90deg,transparent 0 44%,#000 56% 100%);mask-image:linear-gradient(90deg,transparent 0 44%,#000 56% 100%);
+  -webkit-mask-size:230% 100%;mask-size:230% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;animation:zb-coat 1.6s cubic-bezier(.45,.05,.35,1) forwards}
 .zb-spray{position:absolute;inset:0;z-index:5;pointer-events:none;opacity:0;-webkit-mask-size:100% 100%;mask-size:100% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;
   background:linear-gradient(90deg,transparent 0 44%,rgba(255,255,255,.08) 47%,rgba(255,255,255,.55) 50%,rgba(255,255,255,.08) 53%,transparent 56% 100%) no-repeat;background-size:230% 100%;mix-blend-mode:screen}
 .zb-spray.go{animation:zb-spray 1.6s cubic-bezier(.45,.05,.35,1) forwards}

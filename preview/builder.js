@@ -387,11 +387,18 @@
       const measure = () => {
         if (!this.phone()) return;
         let b = 0;
+        // only what the header actually paints counts: a hidden header can leave its empty, see-through wrapper behind
+        const painted = (cs) => (cs.backgroundImage && cs.backgroundImage !== 'none') || !/rgba?\([^)]*,\s*0\)|transparent/.test(cs.backgroundColor);
         [12, innerWidth / 2].forEach((x) => {
-          let el = document.elementFromPoint(x, 2);
+          let el = document.elementFromPoint(x, 2), seen = false;
           while (el && el !== document.body && el !== document.documentElement && !this.root.contains(el)) {
-            const p = getComputedStyle(el).position;
-            if (p === 'fixed' || p === 'sticky') { const r = el.getBoundingClientRect(); if (r.top <= 2 && r.bottom > 0 && r.bottom < innerHeight * 0.3) b = Math.max(b, r.bottom); break; }
+            const cs = getComputedStyle(el);
+            seen = seen || painted(cs);
+            if (cs.position === 'fixed' || cs.position === 'sticky') {
+              const r = el.getBoundingClientRect();
+              if (seen && r.top <= 2 && r.bottom > 0 && r.bottom < innerHeight * 0.3) b = Math.max(b, r.bottom);
+              break;
+            }
             el = el.parentElement;
           }
         });
@@ -652,17 +659,20 @@
       const others = [...this.root.querySelectorAll('.zb-fin')].filter((e) => !inc.includes(e));
       const photos = inc.map((e) => e.querySelector('.zb-photo'));
       clearTimeout(this.coatT);
-      [...inc, ...others].forEach((e) => { e.classList.remove('top'); e.querySelector('.zb-photo').classList.remove('coat'); });
+      [...inc, ...others].forEach((e) => { e.classList.remove('top'); e.querySelector('.zb-photo').classList.remove('coat', 'coat-out'); });
       if (this.reduce) { this.showFinish(toSlug); return; }
       this.coatAt = { slug: toSlug, t: performance.now() };   // the accent and cap canvases join this wipe (coatSwap)
+      // the old finish wipes out exactly where the new one arrives, so none of it shows around or through the new finish
+      const gone = others.filter((e) => e.style.opacity !== '0').map((e) => e.querySelector('.zb-photo'));
       inc.forEach((e) => { e.style.opacity = '1'; e.classList.add('top'); });
       photos.forEach((p) => { void p.offsetWidth; p.classList.add('coat'); });
+      gone.forEach((p) => { void p.offsetWidth; p.classList.add('coat-out'); });
       const sp = this.q('spray'), hz = this.q('haze'), white = /white|cream|ivory|light/.test(toSlug);
       sp.style.webkitMaskImage = sp.style.maskImage = `url('${this.C.art[toSlug].mask}')`;
       sp.style.mixBlendMode = white ? 'multiply' : 'screen';
       sp.style.backgroundImage = white ? 'linear-gradient(90deg,transparent 0 44%,rgba(120,124,130,.12) 47%,rgba(110,114,120,.45) 50%,rgba(120,124,130,.12) 53%,transparent 56% 100%)' : '';
       [sp, hz].forEach((e) => { e.classList.remove('go'); void e.offsetWidth; e.classList.add('go'); });
-      this.coatT = setTimeout(() => { inc.forEach((e) => e.classList.remove('top')); photos.forEach((p) => p.classList.remove('coat')); others.forEach((e) => { e.style.opacity = '0'; }); }, 1700);
+      this.coatT = setTimeout(() => { inc.forEach((e) => e.classList.remove('top')); photos.forEach((p) => p.classList.remove('coat')); others.forEach((e) => { e.style.opacity = '0'; }); gone.forEach((p) => p.classList.remove('coat-out')); }, 1700);
     }
 
     /* ---------- motion helpers ---------- */
@@ -1094,7 +1104,7 @@
             S.acc = S.acc.filter((o) => !swap.includes(o)); S.acc.push(id);
             if (swap.length) { const was = this.accs.find((a) => a.productId === swap[0]); if (was) this.chip(`Swapped out <b>${esc(was.title)}</b>`); }
           }
-          this.save(); this.renderAcc(); this.update();
+          this.save(); this.renderAcc(); this.update(false);   // accessories never change the grinder itself, so it is not redrawn
         };
       });
     }
