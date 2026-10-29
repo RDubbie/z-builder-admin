@@ -16,7 +16,7 @@
   const STAGE_NOTES = ['Your grinder', 'Burr choices', 'Accent piece & funnel cap', 'Accessories'];
   // stage % placement of the grinder for each step
   const RIG = [{ h: 80, cx: 50, top: 10 }, { h: 52, cx: 50, top: 44 }, { h: 150, left: 7, top: 4 }, { h: 60, cx: 52, top: 27 }];
-  const PROP_SLOTS = [{ left: '-1%', width: '50%', bottom: '15%' }, { left: '5%', width: '20%', bottom: '6%', zIndex: 2 }];
+  const PROP_SLOTS = [{ left: '-2%', width: '57%', bottom: '14%' }, { left: '5%', width: '20%', bottom: '6%', zIndex: 2 }];
   // included items laid out on the right side of the grinder on the accessories step
   const INCLUDED_SLOTS = { spray: { left: '76%', width: '5.6%', bottom: '21%' }, tools: { left: '82%', width: '15%', bottom: '19%' }, brush: { left: '61%', width: '30%', bottom: '13%', zIndex: 2 } };
 
@@ -1109,6 +1109,15 @@
       const gid = this.variant().id;
       const items = this.lines(build).map((l) => ({ id: l.id, quantity: 1, properties: l.props, ...(l.nest ? { parent_id: gid } : {}) }));
       const msg = this.q('msg');
+      // one grinder per cart: a grinder already there (from this builder or any other page) stops the add
+      const grinderHandles = new Set([...((this.C.cat && this.C.cat.grinders) || []).map((g) => g.product), this.C.grinder && this.C.grinder.handle].filter(Boolean));
+      let cart = null;
+      try { cart = await (await fetch(this.C.shop.rootUrl.replace(/\/$/, '') + '/cart.js', { headers: { Accept: 'application/json' }, credentials: 'same-origin' })).json(); } catch (e) { /* the cart guard still refuses a second grinder */ }
+      if (cart && (cart.items || []).some((it) => (it.properties && it.properties._zb === 'grinder') || grinderHandles.has(it.handle))) {
+        msg.className = 'zb-msg err'; msg.hidden = false;
+        msg.innerHTML = `Your cart already has a grinder. Check out or remove it before adding another. <a href="${esc(this.C.shop.cartUrl)}" style="color:inherit;text-decoration:underline">View cart</a>`;
+        return;
+      }
       this.adding = true; this.b('next').textContent = 'Adding…'; this.b('next').disabled = true;
       try {
         const post = (list) => fetch(this.C.shop.cartAddUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ items: list }) });
