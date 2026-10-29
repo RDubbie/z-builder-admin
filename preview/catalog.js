@@ -97,7 +97,12 @@ window.ZB_DEFAULT_CATALOG = {"version":1,"sizes":[{"key":"64mm","name":"64mm","p
       if (!C.settings.heading) C.settings.heading = g.heading || `Build your ${g.name}`;
       // finish text and swatches: the catalog's, unless the block setting has lines
       if (!String(C.settings.finishText || '').trim() && g.finishText) C.settings.finishText = Object.entries(g.finishText).map(([k, v]) => `${k}: ${v}`).join('\n');
-      if (!String(C.settings.finishSwatches || '').trim() && g.finishSwatch) C.settings.finishSwatches = Object.entries(g.finishSwatch).map(([k, v]) => `${k}: ${v}`).join('\n');
+      // swatches: the block setting's lines win; the catalog's fill in any color they leave out (such as a new color made in the Art studio)
+      if (g.finishSwatch) {
+        const own = String(C.settings.finishSwatches || ''), has = new Set(own.split('\n').map((l) => slug(l.split(":")[0])).filter(Boolean));
+        const add = Object.entries(g.finishSwatch).filter(([k, v]) => v && !has.has(k)).map(([k, v]) => `${k}: ${v}`);
+        if (add.length) C.settings.finishSwatches = [own.trim(), ...add].filter(Boolean).join('\n');
+      }
       // what ships in the box
       if (!C.included || !C.included.length) {
         C.included = (g.included || []).map((x) => ({ name: x.name, image: this.asset(base, x.image), slot: x.slot || '' }));

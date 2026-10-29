@@ -626,6 +626,12 @@
       ctx.strokeStyle = lightGrad(ctx, rxf, [[0, 'rgba(255,248,232,.7)'], [0.42, 'rgba(255,248,232,.12)'], [0.6, 'rgba(0,0,0,0)'], [1, 'rgba(40,25,10,.35)']], fcx, fcy); ctx.stroke();
       ctx.restore();
     }
+    // light finishes get the darker spray; read from the swatch color, so a new color such as tan needs no code
+    isLight(s) {
+      const c = this.finishSwatch[s];
+      if (/^#[0-9a-f]{6}$/i.test(c || '')) { const n = parseInt(c.slice(1), 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255 > 0.55; }
+      return /white|cream|ivory|light|tan|sand|beige|khaki/.test(s || '');
+    }
     finishHex(s) {
       const c = this.finishSwatch[s];
       return /^#[0-9a-f]{6}$/i.test(c || '') ? c : /white|silver|cream|ivory/.test(s || '') ? '#e7e6e2' : '#18191b';
@@ -670,7 +676,7 @@
       inc.forEach((e) => { e.style.opacity = '1'; e.classList.add('top'); });
       photos.forEach((p) => { void p.offsetWidth; p.classList.add('coat'); });
       gone.forEach((p) => { void p.offsetWidth; p.classList.add('coat-out'); });
-      const sp = this.q('spray'), hz = this.q('haze'), white = /white|cream|ivory|light/.test(toSlug);
+      const sp = this.q('spray'), hz = this.q('haze'), white = this.isLight(toSlug);
       sp.style.webkitMaskImage = sp.style.maskImage = `url('${this.C.art[toSlug].mask}')`;
       sp.style.mixBlendMode = white ? 'multiply' : 'screen';
       sp.style.backgroundImage = white ? 'linear-gradient(90deg,transparent 0 44%,rgba(120,124,130,.12) 47%,rgba(110,114,120,.45) 50%,rgba(120,124,130,.12) 53%,transparent 56% 100%)' : '';

@@ -106,3 +106,10 @@
 .zs.cut .zs-thumb{max-width:240px}
 @media (max-width:1000px){ .zs.cut{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(320px,55vh) auto} }
 .zs-side>*{flex-shrink:0}
+
+/* make a finish from another one */
+.zs-rc{display:flex;align-items:center;gap:8px}
+.zs-rc input[type=color]{width:44px;height:30px;border:1px solid #8a8a8a;border-radius:8px;padding:2px;background:#fff;cursor:pointer}
+.zs-pre{display:flex;gap:5px;flex-wrap:wrap}
+.zs-pre button{width:22px;height:22px;border-radius:50%;border:1px solid rgba(0,0,0,.25);cursor:pointer;padding:0}
+.zs-pre button:hover{outline:2px solid #303030;outline-offset:1px}

@@ -12,7 +12,9 @@
   'use strict';
   const CV_URL = 'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js';
   const MAX_SIDE = 2000, WORK = 640, REFINE = 1400, SHADE_MAX = 1.4;
-  const COL = { mask: '#2c6ecb', front: '#e8a33a', knob: '#ff6a3d', cap: '#9b6bff', face: '#2bd18a' };
+  const COL = { mask: '#2c6ecb', front: '#e8a33a', knob: '#ff6a3d', cap: '#9b6bff', face: '#2bd18a', paint: '#00b3a4' };
+  // starting colors for a finish made from another one (by its name); the team can pick any color
+  const PRESETS = [['Tan', '#c9b99b'], ['Sand', '#d6c7a8'], ['Olive green', '#5b6a45'], ['Forest green', '#3e4c3c'], ['Gray', '#8a8d90']];
   const BAND = [0.08, 0.40, 0.84, 0.20];
   const STEPS = [
     { k: 'photo', n: 'Photo', d: 'One photo per color' },
@@ -71,6 +73,61 @@
   function tint(mask, color) { const c = canvas(mask.width, mask.height), x = c.getContext('2d'); x.fillStyle = color; x.fillRect(0, 0, c.width, c.height); x.globalCompositeOperation = 'destination-in'; x.drawImage(mask, 0, 0); return c; }
   function masked(photo, mask) { const c = copyCanvas(photo); if (!mask) return c; const x = c.getContext('2d'); x.globalCompositeOperation = 'destination-in'; x.drawImage(mask, 0, 0, c.width, c.height); return c; }
   function ellipseMask(E, W, H) { const c = canvas(W, H), x = c.getContext('2d'); x.fillStyle = '#fff'; x.beginPath(); x.ellipse(E.cx, E.cy, Math.max(1, E.rx), Math.max(1, E.ry), E.a, 0, Math.PI * 2); x.fill(); return c; }
+
+  /* ---------- recolor: a new finish made from another finish's art ----------
+     Only the painted parts change. Each painted pixel keeps its light and shadow (its brightness against the paint's
+     lit level) and takes the new color; brighter-than-lit spots keep some of their sheen. Steel, wood and the dial's
+     engraving keep the source photo, so every shape lines up with the source finish exactly. */
+  const LIN = Float32Array.from({ length: 256 }, (_, i) => { const c = i / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+  const ENC = Uint8Array.from({ length: 4097 }, (_, i) => { const v = i / 4096; return Math.round(255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055)); });
+  const hexRGB = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''), n = m ? parseInt(m[1], 16) : 0xc9b99b; return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+  const presetFor = (name) => (/tan|sand|desert|khaki|beige|coyote/i.test(name) ? '#c9b99b' : /green|olive|sage|forest|od\b/i.test(name) ? '#5b6a45' : /gr[ae]y|slate|gunmetal/i.test(name) ? '#8a8d90' : '#c9b99b');
+  function meanLum(photo, mask) {
+    const W = photo.width, H = photo.height, d = ctxR(photo).getImageData(0, 0, W, H).data, m = readRGBA(mask, W, H);
+    let t = 0, n = 0; for (let i = 0; i < d.length; i += 4 * 11) if (m[i + 3] > 128) { t += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; n++; }
+    return n ? t / n : 0;
+  }
+  // the painted parts: where the photo differs most from a finish in a very different color (same framing),
+  // otherwise its bright, colorless surfaces. The wood and the cap never count. The team fixes the rest with the brush.
+  function findPaint(photo, mask, other, without) {
+    const W = photo.width, H = photo.height, d = ctxR(photo).getImageData(0, 0, W, H).data, m = readRGBA(mask, W, H), o = other ? readRGBA(other, W, H) : null;
+    const img = new ImageData(W, H), a = img.data, lum = (q, i) => 0.299 * q[i] + 0.587 * q[i + 1] + 0.114 * q[i + 2];
+    // paint flips from light to dark between the two finishes; steel only picks up some of the reflections
+    let sg = 0; if (o) { for (let i = 0; i < d.length; i += 4 * 13) if (m[i + 3] > 128) sg += lum(d, i) - lum(o, i); sg = sg >= 0 ? 1 : -1; }
+    for (let i = 0; i < d.length; i += 4) {
+      if (m[i + 3] < 8) continue;
+      const L = lum(d, i);
+      let p;
+      if (o) p = (sg * (L - lum(o, i)) - 62) / 40;
+      else { const mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]); p = Math.min((L - 120) / 60, (0.16 - (mx - mn) / (mx + 1)) / 0.08); }
+      a[i] = a[i + 1] = a[i + 2] = 255; a[i + 3] = clamp(p, 0, 1) * m[i + 3];
+    }
+    const raw = canvas(W, H); raw.getContext('2d').putImageData(img, 0, 0);
+    // clean up specks and pinholes: blur, then firm the edge again
+    const c = canvas(W, H), x = ctxR(c); x.filter = `blur(${Math.max(1.5, W / 800).toFixed(1)}px)`; x.drawImage(raw, 0, 0); x.filter = 'none';
+    const level = (lo, hi) => { const b = x.getImageData(0, 0, W, H), bd = b.data; for (let i = 3; i < bd.length; i += 4) bd[i] = clamp((bd[i] / 255 - lo) / (hi - lo), 0, 1) * 255; x.putImageData(b, 0, 0); };
+    const soften = (r) => { const t = copyCanvas(c); x.clearRect(0, 0, W, H); x.filter = `blur(${r.toFixed(1)}px)`; x.drawImage(t, 0, 0); x.filter = 'none'; };
+    level(0.35, 0.65);
+    // close small gaps inside the paint (spots of the source color left behind): grow, then shrink back
+    const r = Math.max(2, W / 450); soften(r); level(0.08, 0.3); soften(r); level(0.7, 0.92);
+    x.globalCompositeOperation = 'destination-out'; (without || []).forEach((l) => { if (l) x.drawImage(l, 0, 0); });
+    x.globalCompositeOperation = 'destination-in'; x.drawImage(mask, 0, 0); x.globalCompositeOperation = 'source-over';
+    return c;
+  }
+  function recolor(src, paint, hex, shine) {
+    const W = src.width, H = src.height, out = ctxR(src).getImageData(0, 0, W, H), d = out.data, p = readRGBA(paint, W, H);
+    const Y = (i) => 0.2126 * LIN[d[i]] + 0.7152 * LIN[d[i + 1]] + 0.0722 * LIN[d[i + 2]];
+    // the paint's lit level: most of the painted surface lands on the new color itself
+    const ys = []; for (let i = 0; i < d.length; i += 4 * 7) if (p[i + 3] > 200) ys.push(Y(i));
+    ys.sort((u, v) => u - v); const ref = Math.max(0.02, ys.length ? ys[Math.floor(ys.length * 0.8)] : 0.7);
+    const t = hexRGB(hex).map((v) => LIN[v]);
+    for (let i = 0; i < d.length; i += 4) {
+      const a = p[i + 3] / 255; if (!a) continue;
+      const k = Y(i) / ref, sheen = Math.max(0, k - 1) * shine, lit = Math.min(k, 1.6);
+      for (let c = 0; c < 3; c++) d[i + c] = Math.round(d[i + c] * (1 - a) + ENC[Math.round(Math.min(1, t[c] * lit + sheen) * 4096)] * a);
+    }
+    const c = canvas(W, H); c.getContext('2d').putImageData(out, 0, 0); return c;
+  }
 
   /* ---------- texture square and mesh: the same math as the builder (shared/engine/builder.js) ---------- */
   function texSquare(img, tex, crop) {
@@ -396,7 +453,7 @@
       this.cur = this.fins[0].slug; this.step = 0; this.tool = null; this.mode = 'add';
       this.H = hingeFrom(this.g.geom || {}, this.cur);
       this.view = { s: 1, x: 0, y: 0 }; this.brush = 26; this.feather = 0.6; this.detail = 1.2; this.contrast = 0.45; this.side = 0.55; this.meshN = 3;
-      this.showBg = true; this.previewOpen = false; this.previewNoCap = false;
+      this.showBg = true; this.previewOpen = false; this.previewNoCap = false; this.showPaint = true;
       this.undoStack = []; this.texCache = new Map(); this.drag = null; this.poly = null; this.keys = {};
       this.accents = (this.o.accents || []).filter((a) => a && a.image); this.caps = (this.o.caps || []).filter((a) => a && a.image);
       this.prevAcc = this.accents[0] ? String(this.accents[0].id) : ''; this.prevCap = this.caps[0] ? String(this.caps[0].id) : '';
@@ -404,10 +461,63 @@
     }
     get hinge() { return this.H.mode; }
     set hinge(v) { this.H.mode = v; }
-    blank(f) { return { ...f, fromArt: false, photo: null, layers: { mask: null, front: null, knob: null, cap: null }, vec: {}, hints: {}, knobEll: null, faceEll: null, band: null, knobMesh: null, capMesh: null, uncapped: null, uncappedMask: null, steel: null, capMetalImg: null, ver: 0 }; }
+    blank(f) { return { ...f, fromArt: false, photo: null, recolor: null, layers: { mask: null, front: null, knob: null, cap: null, paint: null }, vec: {}, hints: {}, knobEll: null, faceEll: null, band: null, knobMesh: null, capMesh: null, uncapped: null, uncappedMask: null, steel: null, capMetalImg: null, ver: 0 }; }
     get f() { return this.F[this.cur]; }
-    get layerKey() { return { mask: 'mask', front: 'front', knob: 'knob', cap: 'cap' }[STEPS[this.step].k] || null; }
-    changed(F = this.f) { F.ver++; F._cache = null; this.dirty = true; this.draw(); this.refreshSteps(); }   // the catalog changes only on Save art
+    // in step 1 of a finish made from another one, the brushes edit its painted parts
+    get layerKey() { const k = STEPS[this.step].k; return { mask: 'mask', front: 'front', knob: 'knob', cap: 'cap' }[k] || (k === 'photo' && this.f.recolor ? 'paint' : null); }
+    changed(F = this.f) {
+      if (F.recolor && F.layers.paint && F.recolor.paintRef !== F.layers.paint) this.applyRecolor(F);   // the painted parts changed: color them again
+      F.ver++; F._cache = null; this.dirty = true; this.draw(); this.refreshSteps();   // the catalog changes only on Save art
+    }
+
+    /* ---------- a finish made from another finish ---------- */
+    sources(F = this.f) { return this.fins.map((f) => this.F[f.slug]).filter((G) => G !== F && G.photo && G.layers.mask && !G.recolor); }
+    applyRecolor(F) { const R = F.recolor; F.photo = recolor(R.src, F.layers.paint, R.color, R.shine); R.paintRef = F.layers.paint; F._cut = null; }
+    makeFrom(slug, hex) {
+      const S = this.F[slug], F = this.f;
+      if (!S || !S.photo || !S.layers.mask || S === F) return;
+      this.busy(`Making ${F.name} from ${S.name}`);
+      setTimeout(() => {
+        try {
+          this.pushUndo();
+          const cp = copyCanvas, deep = (o) => (o ? JSON.parse(JSON.stringify(o)) : o);
+          // every shape comes from the source finish, so the new color lines up with it exactly
+          Object.assign(F, {
+            fromArt: S.fromArt, layers: { mask: cp(S.layers.mask), front: cp(S.layers.front), knob: cp(S.layers.knob), cap: cp(S.layers.cap), paint: null },
+            vec: deep(S.vec) || {}, hints: {}, knobEll: S.knobEll && { ...S.knobEll }, faceEll: S.faceEll && { ...S.faceEll }, band: S.band && S.band.slice(),
+            knobMesh: deep(S.knobMesh), capMesh: deep(S.capMesh), uncapped: S.uncapped, uncappedMask: S.uncappedMask, steel: S.steel, capMetalImg: S.capMetalImg
+          });
+          const ls = meanLum(S.photo, S.layers.mask);
+          const other = this.fins.map((f) => this.F[f.slug]).find((G) => G !== S && G !== F && !G.recolor && G.photo && G.layers.mask && G.photo.width === S.photo.width && G.photo.height === S.photo.height && Math.abs(meanLum(G.photo, G.layers.mask) - ls) > 35);
+          F.layers.paint = findPaint(S.photo, S.layers.mask, other && other.photo, [S.layers.knob, S.layers.cap]);
+          F.recolor = { from: S.slug, fromName: S.name, src: cp(S.photo), color: hex, shine: 0.6, by: other ? other.name : null, paintRef: null };
+          this.setSwatch(F, hex);
+          this.changed(F); this.renderAll(); this.renderFins(); this.fit();
+        } catch (e) { this.toast('Could not make the color: ' + e.message); } finally { this.busy(false); }
+      }, 30);
+    }
+    findPaintAgain() {
+      const F = this.f, R = F.recolor, S = R && this.F[R.from]; if (!S || !S.photo) return;
+      this.busy('Finding the painted parts');
+      setTimeout(() => {
+        try {
+          this.pushUndo();
+          const ls = meanLum(R.src, F.layers.mask);
+          const other = this.fins.map((f) => this.F[f.slug]).find((G) => G !== S && G !== F && !G.recolor && G.photo && G.layers.mask && G.photo.width === R.src.width && G.photo.height === R.src.height && Math.abs(meanLum(G.photo, G.layers.mask) - ls) > 35);
+          F.layers.paint = findPaint(R.src, F.layers.mask, other && other.photo, [F.layers.knob, F.layers.cap]);
+          this.changed(F); this.renderSide(); this.renderLayers();
+        } finally { this.busy(false); }
+      }, 30);
+    }
+    setSwatch(F, hex) {
+      const f = this.fins.find((x) => x.slug === F.slug); if (f) f.swatch = hex; F.swatch = hex;
+      this.g.finishSwatch = { ...(this.g.finishSwatch || {}), [F.slug]: hex };   // the builder's color dot (saved with the art)
+    }
+    recolorAgain(patch) {
+      const F = this.f; if (!F.recolor) return;
+      Object.assign(F.recolor, patch); if (patch.color) this.setSwatch(F, patch.color);
+      clearTimeout(this._rc); this._rc = setTimeout(() => { this.applyRecolor(F); F.ver++; F._cache = null; this.dirty = true; this.draw(); this.renderFins(); }, 60);
+    }
 
     /* ---------- layout ---------- */
     mount() {
@@ -448,7 +558,7 @@
     }
     renderLayers() {
       const F = this.f, row = (k, n, on) => `<label><i style="background:${COL[k]}"></i>${n}<span style="margin-left:auto;color:${on ? '#29845a' : '#8a8a8a'}">${on ? 'Set' : 'Not set'}</span></label>`;
-      this.q('lays').innerHTML = `<h4>Layers for ${esc(F.name)}</h4>${row('mask', 'Grinder', !!F.layers.mask)}${row('front', 'Front assembly', !!F.layers.front)}${row('knob', 'Accent piece', !!F.knobEll)}${row('cap', 'Funnel cap', !!F.layers.cap)}${row('face', 'Burr chamber', !!F.faceEll)}`;
+      this.q('lays').innerHTML = `<h4>Layers for ${esc(F.name)}</h4>${row('mask', 'Grinder', !!F.layers.mask)}${row('front', 'Front assembly', !!F.layers.front)}${row('knob', 'Accent piece', !!F.knobEll)}${row('cap', 'Funnel cap', !!F.layers.cap)}${row('face', 'Burr chamber', !!F.faceEll)}${F.recolor ? row('paint', 'Painted parts', !!F.layers.paint) : ''}`;
     }
     go(i) { this.step = clamp(i, 0, STEPS.length - 1); this.poly = null; this.tool = this.defaultTool(); this.renderAll(); }
     defaultTool() { return { photo: 'pan', mask: 'keep', front: this.f.layers.front && this.hinge !== 'none' ? 'hinge' : 'lasso', knob: 'ellipse', cap: 'rect', face: 'ellipse', save: 'pan' }[STEPS[this.step].k]; }
@@ -458,7 +568,7 @@
       const k = STEPS[this.step].k; if (!this.tool) this.tool = this.defaultTool();
       const T = (id, label, dot, title) => `<button type="button" class="zs-tool" data-t="${id}" aria-pressed="${this.tool === id}" title="${esc(title || label)}">${dot ? `<span class="dot" style="background:${dot}"></span>` : ''}${label}</button>`;
       const sets = {
-        photo: [T('pan', 'Move view')],
+        photo: this.f.recolor ? [T('paint', 'Add color', COL.paint, 'Paint where the new color goes'), T('erase', 'Remove color', '', 'Paint where the source photo should stay, such as steel'), T('lasso', 'Lasso'), T('poly', 'Polygon'), '<span class="sep"></span>', T('pan', 'Move view')] : [T('pan', 'Move view')],
         mask: [T('keep', 'Keep', '#00c853', 'Paint over parts to keep. The cut-out updates when you let go.'), T('remove', 'Remove', '#ff1744', 'Paint over background to remove. The cut-out updates when you let go.'), '<span class="sep"></span>', T('paint', 'Paint'), T('erase', 'Erase'), T('lasso', 'Lasso'), T('poly', 'Polygon'), T('points', 'Edit points'), '<span class="sep"></span>', T('pan', 'Move view')],
         front: [T('hinge', 'Hinge', '#e8a33a', 'Drag the hinge point or the slide arrow. Click to place it.'), '<span class="sep"></span>', T('rect', 'Box select', '', 'Draw a box around the part. The app finds it inside the box.'), T('keep', 'Keep', '#00c853'), T('remove', 'Remove', '#ff1744'), '<span class="sep"></span>', T('lasso', 'Lasso'), T('poly', 'Polygon'), T('paint', 'Paint'), T('erase', 'Erase'), T('points', 'Edit points'), '<span class="sep"></span>', T('pan', 'Move view')],
         knob: [T('ellipse', 'Ellipse'), T('rect', 'Find in box', '', 'Draw a box around the accent piece. The app fits the ellipse.'), T('mesh', 'Mold'), '<span class="sep"></span>', T('paint', 'Add edge', '', 'Paint the visible side of the piece'), T('erase', 'Erase edge'), '<span class="sep"></span>', T('pan', 'Move view')],
@@ -497,7 +607,8 @@
           <div class="zs-drop" data-act="upload">${F.photo ? `<img src="${F.photo.toDataURL('image/jpeg', 0.6)}" alt="">` : ''}<b>${F.photo ? 'Replace the photo' : 'Upload a photo'}</b><span>Drop a JPG or PNG here, or click to choose</span></div>
           ${F.image ? `<button type="button" class="zs-btn full" data-act="shopify">Use the ${esc(F.name)} product photo</button>` : ''}
           ${this.o.pickFile ? '<button type="button" class="zs-btn full" data-act="files">Choose from Shopify Files</button>' : ''}
-          ${F.photo ? `<p class="zs-ok">${F.photo.width} x ${F.photo.height} px. Next, cut out the grinder.</p>` : ''}`;
+          ${F.photo && !F.recolor ? `<p class="zs-ok">${F.photo.width} x ${F.photo.height} px. Next, cut out the grinder.</p>` : ''}
+          ${this.madePanel(F)}`;
       } else if (k === 'mask') {
         h = `<h3>2. Cut out the grinder</h3><p>The app finds the grinder and removes the background. Then fix any spot with the Keep and Remove brushes: paint over it and let go.</p>
           <button type="button" class="zs-btn primary full" data-act="auto" ${F.photo ? '' : 'disabled'}>${F.layers.mask ? 'Cut out again' : 'Cut out automatically'}</button>
@@ -545,6 +656,28 @@
       side.innerHTML = needPhoto + h + copyBtn + next;
       this.bindSide(); if (k === 'cap' && F.layers.cap) this.drawBand();
     }
+    /* step 1: make this color from another finish's art, or tune one that was made */
+    madePanel(F) {
+      const R = F.recolor, colorRow = (v) => `<div class="zs-rc"><input type="color" data-rc="color" value="${esc(v)}" aria-label="New color"><span class="zs-pre">${PRESETS.map(([n, c]) => `<button type="button" data-pre="${c}" title="${esc(n)}" style="background:${c}" aria-label="${esc(n)}"></button>`).join('')}</span></div>`;
+      if (R) {
+        return `<div class="zs-k">Made from ${esc(R.fromName)}</div>
+          <p>Only the painted parts take the new color. Light, shadow and every shape come from ${esc(R.fromName)}, so the two line up exactly.</p>
+          <label class="zs-field"><span>Color</span>${colorRow(R.color)}</label>
+          <label class="zs-field"><span>Sheen</span><input type="range" min="0" max="1" step="0.05" value="${R.shine}" data-rc="shine"><small>How much of the bright reflections stays. Lower for a flatter finish.</small></label>
+          <label class="zs-check"><input type="checkbox" data-rc="show" ${this.showPaint ? 'checked' : ''}><span>Show the painted parts (teal)</span></label>
+          <p class="zs-tip">${R.by ? `Found by comparing ${esc(R.fromName)} with ${esc(R.by)}.` : 'Found from the bright painted surfaces.'} Use Add color and Remove color to fix any spot, for example steel that turned colored.</p>
+          <button type="button" class="zs-btn full" data-act="paintAgain">Find the painted parts again</button>
+          <p style="font-size:12px">The other steps are already done. When you have a real photo of this color in the same framing, upload it above: the shapes stay.</p>`;
+      }
+      const src = this.sources(F);
+      if (!src.length) return '';
+      const best = src.slice().sort((a, b) => meanLum(b.photo, b.layers.mask) - meanLum(a.photo, a.layers.mask))[0];   // the lightest finish keeps the most detail
+      return `<div class="zs-k">Or make it from another finish</div>
+        <p>No photo yet? Recolor the art of another finish. It keeps all the shading and lines up exactly. Best for matte colors like Cerakote.</p>
+        <label class="zs-field"><span>Start from</span><select data-rc="from">${src.map((G) => `<option value="${esc(G.slug)}" ${G === best ? 'selected' : ''}>${esc(G.name)}</option>`).join('')}</select></label>
+        <label class="zs-field"><span>New color</span>${colorRow(F.swatch && /^#[0-9a-f]{6}$/i.test(F.swatch) ? F.swatch : presetFor(F.name))}</label>
+        <button type="button" class="zs-btn primary full" data-act="makeFrom">Make ${esc(F.name)}</button>`;
+    }
     openingPanel() {
       const H = this.H, F = this.f, on = H.mode !== 'none', saved = !!(this.g.geom && this.g.art);
       const dirNow = H.dir != null ? H.dir : Math.round(deg(Math.atan2(0.06, -1)));
@@ -587,6 +720,16 @@
       act('uncapped', async () => { const file = await pickFile(); if (file) this.setExtraPhoto('uncapped', URL.createObjectURL(file)); });
       act('steel', async () => { const file = await pickFile(); if (file) this.setExtraPhoto('steel', URL.createObjectURL(file)); });
       act('export', () => this.exportArt());
+      act('makeFrom', () => { const from = $('[data-rc="from"]', side), col = $('[data-rc="color"]', side); this.makeFrom(from ? from.value : '', col ? col.value : presetFor(F.name)); });
+      act('paintAgain', () => this.findPaintAgain());
+      $$('[data-pre]', side).forEach((b) => { b.onclick = () => { const col = $('[data-rc="color"]', side); if (col) col.value = b.dataset.pre; if (F.recolor) this.recolorAgain({ color: b.dataset.pre }); }; });
+      $$('[data-rc]', side).forEach((el) => {
+        const k = el.dataset.rc; if (k === 'from') return;
+        el[k === 'show' ? 'onchange' : 'oninput'] = () => {
+          if (k === 'show') { this.showPaint = el.checked; this.draw(); return; }
+          if (F.recolor) this.recolorAgain(k === 'shine' ? { shine: +el.value } : { color: el.value });
+        };
+      });
       act('play', () => this.play());
       act('saveOpening', () => this.saveOpening());
       act('pivotReset', () => { this.H.pivotPx = null; this.H.pivotPct = null; this.dirty = true; this.renderSide(); this.draw(); });
@@ -623,7 +766,7 @@
           if (Math.abs(ar - 1) > 0.02) this.toast(`This photo has a different shape than the other colors. The app resized it to ${W} x ${H}. Shapes may not line up.`);
         }
         this.pushUndo();
-        F.photo = imageCanvas(img, W, H); F.fromArt = false;
+        F.photo = imageCanvas(img, W, H); F.fromArt = false; F.recolor = null; F.layers.paint = null;   // a real photo of the color: the shapes stay
         if (F.layers.mask && (F.layers.mask.width !== F.photo.width || F.layers.mask.height !== F.photo.height)) Object.assign(F, this.blank(F), { photo: F.photo });
         this.changed(F); this.renderSide(); this.renderLayers(); this.fit();
       } catch (e) { this.toast(e.message); } finally { this.busy(false); }
@@ -755,6 +898,7 @@
       const u = this.undoStack.pop(); if (!u) return;
       const F = this.F[u.slug]; this.cur = u.slug;
       Object.assign(F, { layers: u.layers, hints: u.hints, vec: JSON.parse(u.vec), knobEll: u.knobEll, faceEll: u.faceEll, band: u.band, knobMesh: JSON.parse(u.knobMesh), capMesh: JSON.parse(u.capMesh), photo: u.photo });
+      if (!F.layers.paint) F.recolor = null;
       this.changed(F); this.renderAll();
     }
     // raster edits draw on a copy, so undo keeps the old canvas
@@ -809,7 +953,7 @@
     cutCache(F) {
       if (F._cut && F._cut.ver === F.ver) return F._cut;
       const cut = F.layers.mask ? masked(F.photo, F.layers.mask) : null;
-      const t = {}; ['mask', 'front', 'knob', 'cap'].forEach((k) => { if (F.layers[k]) t[k] = tint(F.layers[k], COL[k]); });
+      const t = {}; ['mask', 'front', 'knob', 'cap', 'paint'].forEach((k) => { if (F.layers[k]) t[k] = tint(F.layers[k], COL[k]); });
       const hint = {}; Object.entries(F.hints).forEach(([k, v]) => { if (v) hint[k] = v; });
       F._cut = { ver: F.ver, cut, t, hint }; return F._cut;
     }
@@ -936,7 +1080,7 @@
       const C = F.photo && this.cutCache(F);
       const lk = this.layerKey;
       if (this.playing && C.cut) { this.drawParts(x, F, this.playing.P, this.playing.pose, this.playing.chamber); }
-      else if (k === 'photo' || !C.cut) { x.drawImage(F.photo, 0, 0); }
+      else if (k === 'photo' || !C.cut) { x.drawImage(F.photo, 0, 0); if (k === 'photo' && F.recolor && this.showPaint && C.t.paint) { x.globalAlpha = 0.32; x.drawImage(C.t.paint, 0, 0); x.globalAlpha = 1; } }
       else if (k === 'save' || (k === 'face' && this.previewOpen)) { x.drawImage(this.composite(F, this.shading(F), { open: this.previewOpen, noCap: this.previewNoCap && k === 'save' }), 0, 0); }
       else {
         if (k === 'mask' && this.showBg) { x.globalAlpha = 0.28; x.drawImage(F.photo, 0, 0); x.globalAlpha = 1; }
@@ -1243,6 +1387,10 @@
             else if (F.capMetalImg) { const m = canvas(c.w, c.h); m.getContext('2d').drawImage(F.capMetalImg, 0, 0, c.w, c.h); add('capMetal', m); }
           }
           if (F.faceEll && this.hinge !== 'none' && front) { const E = F.faceEll; G.face = { c: [r3((E.cx - X0) / BW * 100), r3((E.cy - Y0) / BH * 100)], w: r3(E.rx / BW * 100), h: r3(E.ry / BH * 100), rot: r2(deg(E.a)) }; G.open = this.hinge === 'slide' ? r2(this.H.dist) : 25; }
+          // the accent edge settings made in the catalog (lip, wall, shade) stay; a made color starts from its source's, with its own lip color
+          const was = this.g.geom || {}, prev = (was[F.slug] && was[F.slug].knob) || (F.recolor && was[F.recolor.from] && was[F.recolor.from].knob);
+          if (G.knob && prev) { const { size, cx, cy, w, h, rot, mesh, ...edge } = prev; G.knob = { ...edge, ...G.knob }; }
+          if (G.knob && F.recolor) G.knob.rim = { ...(G.knob.rim || {}), color: F.recolor.color };
           geom[F.slug] = G; finishes[F.slug] = files;
         }
         let done = 0;
