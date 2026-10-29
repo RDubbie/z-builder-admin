@@ -50,9 +50,16 @@
 /* stage */
 .zb-stage{position:relative;aspect-ratio:1/1;max-width:100%;width:min(100%,calc(100vh - 200px));min-width:min(100%,320px);justify-self:center;border-radius:4px;overflow:hidden;container-type:inline-size;
   background:radial-gradient(60% 55% at 50% 52%,var(--zb-glow) 0%,var(--zb-stage) 45%,color-mix(in srgb, var(--zb-stage) 55%, var(--zb-ink)) 100%)}
-@container zb (min-width:921px){.zb-stage{position:sticky;top:var(--zb-sticky,96px)}}
-/* phones and tablets (not a narrow column on a big screen, such as the admin preview): the preview stays pinned under the theme's header while the choices scroll under it; the page color fills its sides and a strip below */
-@media (max-width:920px){@container zb (max-width:920px){.zb-stage{position:sticky;top:var(--zb-top-m,0px);z-index:8;width:min(100%,40svh);min-width:0;transition:top .25s ease;box-shadow:0 0 0 50vw var(--zb-ink);clip-path:inset(0 calc((100% - 100cqw) / 2) -14px)}}}
+/* the stage sits in a holder: it sticks beside the choices on desktop */
+.zb-pin{display:grid;min-width:0}
+@container zb (min-width:921px){.zb-pin{position:sticky;top:var(--zb-sticky,96px)}}
+/* phones and tablets (not a narrow column on a big screen, such as the admin preview): the holder runs edge to edge in the
+   stage's edge color and stays pinned under the theme's header while the choices scroll under it */
+@media (max-width:920px){@container zb (max-width:920px){
+  .zb-pin{position:sticky;top:var(--zb-top-m,0px);z-index:8;transition:top .25s ease;margin:0 calc(-1 * clamp(16px,3vw,36px));border-bottom:1px solid var(--zb-line);
+    background:linear-gradient(180deg,transparent 78%,color-mix(in srgb, var(--zb-ink) 35%, transparent)),color-mix(in srgb, var(--zb-stage) 55%, var(--zb-ink))}
+  .zb-stage{width:min(100%,40svh);min-width:0;border-radius:0}
+}}
 .zb-stage::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,transparent 78%,color-mix(in srgb, var(--zb-ink) 35%, transparent))}
 .zb-floor{position:absolute;left:0;right:0;bottom:0;height:22%;background:linear-gradient(180deg,rgba(255,255,255,0),rgba(255,255,255,.025) 40%,rgba(0,0,0,.2))}
 .zb-note{position:absolute;z-index:5;left:3.5%;top:3%;font-family:var(--zb-display);font-size:clamp(9px,1.7cqw,14px);letter-spacing:.14em;text-transform:uppercase;color:var(--zb-muted)}
@@ -110,6 +117,7 @@
 
 .zb-tray{position:absolute;z-index:5;left:3.5%;bottom:4%;display:flex;flex-direction:column;gap:.8cqw}
 .zb-tray[hidden]{display:none}
+@container (max-width:480px){.zb-arc[data-on="1"]~.zb-tray{display:none}}
 .zb-tray.right{left:auto;right:3.5%;align-items:flex-end}
 .zb-tray .tl{font-family:var(--zb-display);font-size:clamp(9px,1.6cqw,13px);letter-spacing:.14em;text-transform:uppercase;color:var(--zb-muted)}
 .zb-tray .ts{display:flex;gap:1.2cqw;align-items:center}
@@ -217,8 +225,9 @@
 .zb-msg.err{border-color:#b4533f;color:color-mix(in srgb, #c0503c 70%, var(--zb-fg))}
 .zb-hint{font-size:12px;color:var(--zb-accent);margin-top:12px;min-height:18px}
 
-.zb-bar{position:sticky;bottom:0;z-index:30;margin:24px calc(-1 * clamp(16px,3vw,36px)) calc(-1 * clamp(16px,3vw,36px));background:color-mix(in srgb, var(--zb-ink) 96%, transparent);border-top:1px solid var(--zb-line);
+.zb-bar{position:sticky;bottom:0;z-index:30;margin:24px calc(-1 * clamp(16px,3vw,36px)) calc(-1 * clamp(16px,3vw,36px));background:var(--zb-ink);border-top:1px solid var(--zb-line);
   padding:12px clamp(16px,3vw,36px) calc(12px + env(safe-area-inset-bottom,0px));border-radius:0 0 4px 4px}
+.zb-bar.pinned::after{content:"";position:absolute;left:0;right:0;top:100%;height:140px;background:var(--zb-ink);pointer-events:none}
 .zb-bar .in{max-width:1360px;margin:0 auto;display:flex;align-items:center;gap:14px;justify-content:space-between}
 .zb-tot{display:flex;flex-direction:column;min-width:0}
 .zb-tot .l{font-size:12px;color:var(--zb-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -239,4 +248,4 @@
 
 /* the builder lays itself out by its own width (a narrow theme column, a phone, the admin preview), not the window */
 .zb{container:zb/inline-size}
-@supports not (container-type:inline-size){@media (max-width:920px){.zb-grid{grid-template-columns:minmax(0,1fr)}.zb-stage{position:sticky;top:var(--zb-top-m,0px);z-index:8;width:min(100%,40svh);min-width:0;box-shadow:0 0 0 50vw var(--zb-ink);clip-path:inset(0 calc((100% - 100cqw) / 2) -14px)}}@media (min-width:921px){.zb-stage{position:sticky;top:var(--zb-sticky,96px)}}@media (max-width:520px){.zb-incl{grid-template-columns:repeat(2,minmax(0,1fr))}.zb-btn{padding:11px 16px}.zb-tot .v{font-size:19px}.zb-steps button:not([aria-current]) .lbl{display:none}.zb-steps button{padding:8px 10px}.zb-disc{width:48px;height:48px}.zb-spc{padding:7px 12px 7px 7px;font-size:13px}}}
+@supports not (container-type:inline-size){@media (max-width:920px){.zb-grid{grid-template-columns:minmax(0,1fr)}.zb-pin{position:sticky;top:var(--zb-top-m,0px);z-index:8;margin:0 calc(-1 * clamp(16px,3vw,36px));border-bottom:1px solid var(--zb-line);background:color-mix(in srgb, var(--zb-stage) 55%, var(--zb-ink))}.zb-stage{width:min(100%,40svh);min-width:0;border-radius:0}}@media (min-width:921px){.zb-pin{position:sticky;top:var(--zb-sticky,96px)}}@media (max-width:520px){.zb-incl{grid-template-columns:repeat(2,minmax(0,1fr))}.zb-btn{padding:11px 16px}.zb-tot .v{font-size:19px}.zb-steps button:not([aria-current]) .lbl{display:none}.zb-steps button{padding:8px 10px}.zb-disc{width:48px;height:48px}.zb-spc{padding:7px 12px 7px 7px;font-size:13px}}}

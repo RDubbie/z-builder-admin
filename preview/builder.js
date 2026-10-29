@@ -289,7 +289,7 @@
           </div>
         </header>
         <div class="zb-grid">
-          <div class="zb-stage" data-r="stage" aria-label="Grinder preview">
+          <div class="zb-pin" data-r="pin"><div class="zb-stage" data-r="stage" aria-label="Grinder preview">
             <div class="zb-floor"></div>
             <div class="zb-note" data-r="note"></div>
             <div class="zb-props" data-r="props"></div>
@@ -310,7 +310,7 @@
             <div class="zb-tray" data-r="tray" hidden><span class="tl">Spare sets</span><div class="ts" data-r="traySlots"></div></div>
             <div class="zb-tray right" data-r="tray2" hidden><span class="tl">Extra pieces in the box</span><div class="ts" data-r="tray2Slots"></div></div>
             <div class="zb-chip" data-r="chip" role="status" aria-live="polite"></div>
-          </div>
+          </div></div>
           <div class="zb-rail">
             <section data-step="0">
               <p class="zb-eyebrow">Step 1 of 4</p>
@@ -397,17 +397,18 @@
         });
         this.root.style.setProperty('--zb-top-m', Math.round(b) + 'px');
       };
+      const barPinned = () => { if (this.bar) this.bar.classList.toggle('pinned', this.phone() && this.bar.getBoundingClientRect().bottom >= innerHeight - 2); };
       let raf = 0, late = 0;
-      const on = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(measure); clearTimeout(late); late = setTimeout(measure, 350); };
+      const on = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => { measure(); barPinned(); }); clearTimeout(late); late = setTimeout(() => { measure(); barPinned(); }, 350); };
       addEventListener('scroll', on, { passive: true }); addEventListener('resize', on); measure();
     }
     // a new step brings its title up to just under the pinned preview
     toStep() {
       if (!this.phone()) return;
-      const sec = this.root.querySelector(`.zb-rail section[data-step="${this.S.step}"]`), st = this.q('stage');
+      const sec = this.root.querySelector(`.zb-rail section[data-step="${this.S.step}"]`), pin = this.q('pin');
       if (!sec) return;
-      const top = parseFloat(getComputedStyle(st).top) || 0;
-      scrollTo({ top: Math.max(0, scrollY + sec.getBoundingClientRect().top - (top + st.offsetHeight + 26)), behavior: this.reduce ? 'auto' : 'smooth' });
+      const top = parseFloat(getComputedStyle(pin).top) || 0;
+      scrollTo({ top: Math.max(0, scrollY + sec.getBoundingClientRect().top - (top + pin.offsetHeight + 18)), behavior: this.reduce ? 'auto' : 'smooth' });
     }
 
     applyMotion() {
