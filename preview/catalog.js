@@ -9,6 +9,26 @@ window.ZB_DEFAULT_CATALOG = {"version":1,"sizes":[{"key":"64mm","name":"64mm","p
   const DEFAULT = window.ZB_DEFAULT_CATALOG || { version: 1, sizes: [], grinders: [], burrs: [], accessories: [], guide: {} };
   const slug = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/[\s_]+/g, '-').replace(/-+/g, '-');
   const num = (gid) => Number(String(gid || '').split('/').pop()) || 0;
+  /* Art saved from the Art studio on top of the built-in art lost its funnel cap (the built-in cut-out leaves the cap out, so the
+     studio saw only a thin strip of it). A cap that thin takes the built-in cap again, moved into the saved art's frame: both
+     frames come from the same photo, so the accent piece's center gives the shift between them. */
+  function fixCaps(g, d) {
+    const G = g.geom, D = d.geom, fins = g.art && g.art.finishes;
+    if (!G || !D || !fins || !Array.isArray(G.box) || !Array.isArray(D.box) || !d.art || d.art.source !== 'builtin') return g;
+    let geom = null, art = null;
+    Object.keys(fins).forEach((f) => {
+      const S = G[f]; if (!S || !S.cap || !(S.cap.h < 12) || !S.knob || !S.knobPos) return;
+      const src = (d.art.finishes || []).includes(f) ? f : (d.art.finishes || []).includes('soft-white') ? 'soft-white' : (d.art.finishes || [])[0], B = D[src];
+      if (!B || !B.capPos || !B.knob || !B.knobPos || Math.abs(B.knob.w - S.knob.w) > B.knob.w * 0.02) return;   // only the same photo at the same size
+      const ctr = (P, K, box) => { const k = (P[2] / 100 * box[0]) / K.size; return [P[0] / 100 * box[0] + K.cx * k, P[1] / 100 * box[1] + K.cy * k]; };
+      const [bx, by] = ctr(B.knobPos, B.knob, D.box), [sx, sy] = ctr(S.knobPos, S.knob, G.box), dx = bx - sx, dy = by - sy;
+      const move = (P) => P && [+((P[0] / 100 * D.box[0] - dx) / G.box[0] * 100).toFixed(3), +((P[1] / 100 * D.box[1] - dy) / G.box[1] * 100).toFixed(3), +(P[2] / 100 * D.box[0] / G.box[0] * 100).toFixed(3), +(P[3] / 100 * D.box[1] / G.box[1] * 100).toFixed(3)];
+      geom = geom || { ...G }; art = art || { ...fins };
+      geom[f] = { ...S, capPos: move(B.capPos), cap: { ...B.cap }, capNonePos: move(B.capNonePos) };
+      art[f] = { ...fins[f], capD: `${d.art.prefix}-${src}-cap-d.png`, capL: `${d.art.prefix}-${src}-cap-l.png`, capNone: `${d.art.prefix}-${src}-capnone.png`, capMetal: `${d.art.prefix}-${src}-cap-metal.png` };
+    });
+    return geom ? { ...g, geom, art: { ...g.art, finishes: art } } : g;
+  }
   const ART_PARTS = { photo: '', mask: '-mask', body: '-body', front: '-front', knobD: '-knob-d', knobL: '-knob-l', capD: '-cap-d', capL: '-cap-l', capMetal: '-cap-metal', capNone: '-capnone' };
 
   // Stand-in burr picture for a burr added in the admin before it has a photo: a brushed steel ring with cutting teeth.
@@ -34,6 +54,7 @@ window.ZB_DEFAULT_CATALOG = {"version":1,"sizes":[{"key":"64mm","name":"64mm","p
       // built-in art keeps up with the app: a saved catalog takes the newer geometry (seam, opening) of the Z1 and Z2
       if (c !== DEFAULT) c = { ...c, grinders: c.grinders.map((g) => {
         const d = DEFAULT.grinders.find((x) => x.key === g.key);
+        if (d && g.art && g.art.source === 'files') return fixCaps(g, d);
         if (!(d && g.art && g.art.source === 'builtin' && d.geom)) return g;
         if ((d.geom.rev || 1) > ((g.geom && g.geom.rev) || 1)) return { ...g, geom: d.geom };
         // new accent edge settings (lip color, wall direction) arrive without touching any saved edits
@@ -47,7 +68,7 @@ window.ZB_DEFAULT_CATALOG = {"version":1,"sizes":[{"key":"64mm","name":"64mm","p
     /** Asset folder of the theme app extension, from any asset URL in it. */
     assetBase(url) { return String(url || '').split('?')[0].replace(/[^/]*$/, ''); },
     /** A file name inside the extension, or a full URL (uploaded files), as a usable URL. */
-    asset(base, file) { if (!file) return null; return /^(https?:)?\/\//.test(file) || file.startsWith('/') ? file : base + file; },
+    asset(base, file) { if (!file) return null; return /^([a-z][a-z0-9+.-]*:|\/)/i.test(file) ? file : base + file; },
     size(cat, key) { return cat.sizes.find((s) => s.key === key) || null; },
     grinder(cat, { key, handle, productId } = {}) {
       return cat.grinders.find((g) => key && g.key === key)
@@ -75,7 +96,8 @@ window.ZB_DEFAULT_CATALOG = {"version":1,"sizes":[{"key":"64mm","name":"64mm","p
           out[f] = {}; Object.entries(ART_PARTS).forEach(([k, suf]) => { out[f][k] = base + `${a.prefix}-${f}${suf}.${k === 'photo' ? 'jpg' : 'png'}`; });
         });
       } else if (a.finishes && typeof a.finishes === 'object') {
-        Object.entries(a.finishes).forEach(([f, parts]) => { if (parts && parts.photo) out[f] = { ...parts }; });
+        // uploaded files are full URLs; a plain file name is one of the app's own built-in files
+        Object.entries(a.finishes).forEach(([f, parts]) => { if (parts && parts.photo) out[f] = Object.fromEntries(Object.entries(parts).map(([k, v]) => [k, this.asset(base, v)])); });
       }
       return out;
     },
