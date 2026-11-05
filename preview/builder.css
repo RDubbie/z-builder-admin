@@ -281,7 +281,8 @@
 .zb-group+.zb-group{margin-top:30px;padding-top:24px;border-top:1px solid var(--zb-line)}
 .zb-group h4{font-size:15px;align-items:baseline}
 .zb-group h4 span{font-size:12px;letter-spacing:.02em}
-.zb-opt{border-radius:var(--zb-r);padding:14px 16px;min-height:64px;transition:border-color .2s,background .2s,box-shadow .2s,transform .2s var(--zb-ease)}
+.zb-opt{border-radius:var(--zb-r);padding:14px 16px;transition:border-color .2s,background .2s,box-shadow .2s,transform .2s var(--zb-ease)}
+.zb .zb-opt{min-height:64px}
 .zb-opt:not([disabled]):hover{border-color:var(--zb-hover);transform:translateY(-1px)}
 .zb-opt[aria-pressed="true"]{border-color:var(--zb-sel);background:var(--zb-raise);box-shadow:inset 0 0 0 1px var(--zb-sel)}
 .zb-opt .t{font-size:15.5px;letter-spacing:-.005em}
@@ -301,7 +302,7 @@
 .zb-swb[aria-pressed="true"] .zb-disc{outline:2px solid var(--zb-accent);outline-offset:3px}
 .zb-swb[aria-pressed="true"] .nm{color:var(--zb-fg);font-weight:600}
 .zb-swb .nm{color:var(--zb-soft)}
-.zb-spc{min-height:36px;transition:border-color .2s,background .2s}
+.zb .zb-spc{min-height:36px;transition:border-color .2s,background .2s}
 .zb-spc:not([disabled]):hover{border-color:var(--zb-hover)}
 .zb-spc[aria-pressed="true"]{border-color:var(--zb-sel)}
 /* accessories */
@@ -320,12 +321,16 @@
 /* the price bar: frosted, with one clear primary action */
 .zb-bar{background:color-mix(in srgb, var(--zb-ink) 86%, transparent);-webkit-backdrop-filter:saturate(1.4) blur(14px);backdrop-filter:saturate(1.4) blur(14px);box-shadow:0 -10px 30px rgba(0,0,0,.25)}
 .zb-tot .v{font-variant-numeric:tabular-nums;letter-spacing:-.01em}
-.zb-btn{min-height:48px;padding:12px 24px;transition:background .2s,border-color .2s,color .2s,transform .15s}
+.zb-btn{padding:12px 24px;transition:background .2s,border-color .2s,color .2s,transform .15s}
+.zb .zb-btn{min-height:48px}
 .zb-btn:not([disabled]):hover{border-color:var(--zb-hover);background:var(--zb-raise)}
 .zb-btn.primary:not([disabled]):hover{background:color-mix(in srgb, var(--zb-fg) 88%, var(--zb-ink));border-color:transparent}
 .zb-btn:not([disabled]):active{transform:scale(.98)}
 .zb-chip{backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
-@container zb (max-width:520px){.zb-btn{min-height:46px;padding:11px 18px}.zb-opt{padding:13px 14px}.zb-rail h3{font-size:26px}}
+@container zb (max-width:520px){.zb .zb-btn{min-height:46px}.zb-btn{padding:11px 18px}.zb-opt{padding:13px 14px}.zb-rail h3{font-size:26px}}
+/* phones and touch screens: the small pills (extras, voltage, Help me choose) are 44 px tall too */
+@container zb (max-width:520px){.zb .zb-spc,.zb .zb-seg button,.zb .zb-help{min-height:44px}}
+@media (pointer:coarse){.zb .zb-spc,.zb .zb-seg button,.zb .zb-help{min-height:44px}}
 @media (prefers-reduced-motion:reduce){
   .zb-rail section.active{animation:none}
   .zb-opt,.zb-acc,.zb-btn,.zb-swb .zb-disc{transition:none}
