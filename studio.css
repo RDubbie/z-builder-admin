@@ -134,3 +134,27 @@
 .zs-more[open]>*:not(summary){margin-top:10px}
 .zs-sub2 button{font-size:12px;padding:7px 4px}
 .zs-sub2 button[disabled]{opacity:.45;cursor:default}
+
+/* tablet and touch: one-line step bar (numbers, the current step named), Undo and Redo together, 44 px targets */
+.zs-ur{display:inline-flex;gap:4px;white-space:nowrap}
+@media (max-width:1000px){
+  .zs-steps{padding:6px 8px}
+  .zs-steps ol{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none}
+  .zs-steps ol::-webkit-scrollbar{display:none}
+  .zs-steps li{flex:0 0 auto}
+  .zs-steps button{min-height:44px;min-width:44px;grid-template-columns:24px auto;padding:6px 10px;white-space:nowrap}
+  .zs-steps .n{width:24px;height:24px}
+  .zs-steps small{display:none}
+  .zs-steps button:not([aria-current="step"]){grid-template-columns:24px;justify-content:center}
+  .zs-steps button:not([aria-current="step"])>span:last-child{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+}
+@media (max-width:1000px),(pointer:coarse){
+  .zs-tool,.zs-btn,.zs-seg button,.zs-fins button,.zs-more summary{min-height:44px}
+  .zs-zoom button{min-width:44px;min-height:44px}
+  .zs-zoom span{align-self:center}
+  .zs-check{align-items:center;min-height:44px}
+  .zs-check input,.zs-snap input{width:20px;height:20px;margin:0}
+  .zs-field input[type=range],.zs-tools input[type=range]{height:32px}
+  .zs-field select{min-height:44px}
+  .zs-pre button{width:32px;height:32px}
+}

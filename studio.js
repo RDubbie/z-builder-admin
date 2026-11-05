@@ -636,6 +636,8 @@
     refreshSteps() {
       this.q('steps').innerHTML = STEPS.map((s, i) => `<li><button type="button" data-s="${i}" class="${this.stepDone(i) ? 'done' : ''}" ${i === this.step ? 'aria-current="step"' : ''}><span class="n">${this.stepDone(i) ? '&#10003;' : i + 1}</span><span>${s.n}<small>${s.d}</small></span></button></li>`).join('');
       $$('[data-s]', this.q('steps')).forEach((b) => { b.onclick = () => this.go(+b.dataset.s); });
+      const cur = $('[aria-current="step"]', this.q('steps')), ol = this.q('steps');
+      if (cur && ol.scrollWidth > ol.clientWidth) ol.scrollLeft = Math.max(0, cur.offsetLeft - ol.offsetLeft - 8);
     }
     renderLayers() {
       const F = this.f, row = (k, n, on) => `<label><i style="background:${COL[k]}"></i>${n}<span style="margin-left:auto;color:${on ? '#29845a' : '#8a8a8a'}">${on ? 'Set' : 'Not set'}</span></label>`;
@@ -675,7 +677,7 @@
         + (shapey ? `<span class="zs-seg" style="width:150px"><button type="button" data-m="add" aria-pressed="${this.mode === 'add'}">Add</button><button type="button" data-m="sub" aria-pressed="${this.mode === 'sub'}">Remove</button></span>` : '')
         + (smart ? `<label class="zs-snap" title="On: the stroke hugs the nearest edge in the photo. Off: it paints exactly where you drag."><input type="checkbox" data-r="snap" ${this.snap ? 'checked' : ''}>Snap to edges</label>` : '')
         + (brushy ? `<label title="[ and ] change the size">Size <input type="range" min="4" max="120" value="${this.brush}" data-r="brush"></label>` : '')
-        + `<button type="button" class="zs-tool" data-act="undo" ${this.undoStack.length ? '' : 'disabled'} title="Undo (Ctrl+Z)">Undo</button><button type="button" class="zs-tool" data-act="redo" ${this.redoStack.length ? '' : 'disabled'} title="Redo (Ctrl+Shift+Z)">Redo</button>`;
+        + `<span class="zs-ur"><button type="button" class="zs-tool" data-act="undo" ${this.undoStack.length ? '' : 'disabled'} title="Undo (Ctrl+Z)">Undo</button><button type="button" class="zs-tool" data-act="redo" ${this.redoStack.length ? '' : 'disabled'} title="Redo (Ctrl+Shift+Z)">Redo</button></span>`;
       $$('[data-t]', this.q('tools')).forEach((b) => { b.onclick = () => { this.tool = b.dataset.t; this.poly = null; if (this.tool === 'points') this.ensureVec(); if (this.tool === 'mesh') this.ensureMesh(); this.renderTools(); this.draw(); }; });
       $$('[data-m]', this.q('tools')).forEach((b) => { b.onclick = () => { this.mode = b.dataset.m; this.renderTools(); }; });
       const mb = $('[data-act="moreTools"]', this.q('tools')); if (mb) mb.onclick = () => { this.moreOpen = !open; this.renderTools(); };
