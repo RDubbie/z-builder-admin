@@ -71,6 +71,15 @@
     return { X0, Y0, BW: X1 - X0, BH: Y1 - Y0 };
   }
   function combine(a, b, op) { const c = copyCanvas(a); if (!b) return c; const x = c.getContext('2d'); x.globalCompositeOperation = op; x.drawImage(b, 0, 0, c.width, c.height); return c; }
+  /* the body: the cut-out minus the parts drawn on their own layers. The parts are already clipped to the cut-out,
+     so their alpha is taken away as is (destination-out would leave a faint outline of each part on its soft edge,
+     which shows as a ghost line when the front opens). */
+  function minus(base, parts) {
+    const L = parts.filter(Boolean); if (!L.length) return base;
+    const W = base.width, H = base.height, c = copyCanvas(base), x = ctxR(c), id = x.getImageData(0, 0, W, H), a = id.data, P = L.map((l) => readRGBA(l, W, H));
+    for (let i = 3; i < a.length; i += 4) { let v = a[i]; for (let k = 0; k < P.length; k++) v -= P[k][i]; a[i] = v < 0 ? 0 : v; }
+    x.putImageData(id, 0, 0); return c;
+  }
   function tint(mask, color) { const c = canvas(mask.width, mask.height), x = c.getContext('2d'); x.fillStyle = color; x.fillRect(0, 0, c.width, c.height); x.globalCompositeOperation = 'destination-in'; x.drawImage(mask, 0, 0); return c; }
   function masked(photo, mask) { const c = copyCanvas(photo); if (!mask) return c; const x = c.getContext('2d'); x.globalCompositeOperation = 'destination-in'; x.drawImage(mask, 0, 0, c.width, c.height); return c; }
   function ellipseMask(E, W, H) { const c = canvas(W, H), x = c.getContext('2d'); x.fillStyle = '#fff'; x.beginPath(); x.ellipse(E.cx, E.cy, Math.max(1, E.rx), Math.max(1, E.ry), E.a, 0, Math.PI * 2); x.fill(); return c; }
@@ -1098,7 +1107,8 @@
     parts(F, sh, { noCap = false } = {}) {
       const W = F.photo.width, H = F.photo.height, still = canvas(W, H), move = canvas(W, H), xs = still.getContext('2d'), xm = move.getContext('2d');
       const E = this.eff(F);
-      let body = E.mask; if (E.front && this.hinge !== 'none') body = combine(body, E.front, 'destination-out'); if (E.cap) body = combine(body, E.cap, 'destination-out');
+      const bk = this.hinge === 'none' ? 'shut' : 'opens', bodies = E.bodies || (E.bodies = {});
+      const body = bodies[bk] || (bodies[bk] = minus(E.mask, [this.hinge !== 'none' && E.front, E.cap]));
       const front = E.front && this.hinge !== 'none' ? masked(F.photo, E.front) : null;
       xs.drawImage(masked(F.photo, body), 0, 0);
       const drawCap = (x) => { if (noCap) { if (sh && sh.cap) { const [ox, oy, ow, oh] = sh.cap.nonePos; x.drawImage(F.uncapped && F.uncappedMask ? this.uncappedPatch(F, sh.cap) : sh.cap.none, ox, oy, ow, oh); } } else { const cc = this.capCanvas(F, sh); if (cc) x.drawImage(cc.c, cc.cl, cc.ct); else if (E.cap) x.drawImage(masked(F.photo, E.cap), 0, 0); } };
@@ -1544,7 +1554,7 @@
           const FE = this.withEff(F), sh = { knob: F.knobEll ? knobShade(cv, F, { contrast: this.contrast, side: this.side }) : null, cap: F.layers.cap ? capShade(cv, FE) : null };
           const files = {}, add = (part, c, type = 'png') => { files[part] = null; jobs.push({ F, part, c, type, name: `${key}-${F.slug}-${part.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())}-${ver}.${type}` }); };
           const front = FE.layers.front && this.hinge !== 'none' ? FE.layers.front : null;
-          let body = FE.layers.mask; if (front) body = combine(body, front, 'destination-out'); if (sh.cap) body = combine(body, sh.cap.region, 'destination-out');
+          const body = minus(FE.layers.mask, [front, sh.cap && sh.cap.region]);
           add('photo', crop(F.photo, 'jpg'), 'jpg'); add('mask', crop(FE.layers.mask)); add('body', crop(body)); if (front) add('front', crop(front));
           if (F.recolor && F.layers.paint) add('paint', crop(F.layers.paint));   // kept so the next color can use the same painted parts
           const G = {};
