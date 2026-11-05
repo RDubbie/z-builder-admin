@@ -1121,11 +1121,12 @@
       if (onFront) drawCap(xm);
       return { still, move, front: !!front };
     }
-    /* the cap stays on its funnel, as in the builder (geom.hinge.funnel): it rides on the front when the funnel right
-       under it is marked as part of the front, and stays on the body when it is not */
+    /* the cap stays on its funnel, as in the builder (geom.hinge.funnel). A choice made in Products > the grinder >
+       Funnel and cap wins; without one, the cap rides on the front when the funnel right under it is marked as part
+       of the front, and stays on the body when it is not */
     capOnFront(F) {
       const H = this.H, fallback = H.funnel ? H.funnel === 'front' : H.mode !== 'slide';
-      if (!F.photo || !F.layers.cap || !F.layers.front || !F.layers.mask || H.mode === 'none') return fallback;
+      if (H.funnel || !F.photo || !F.layers.cap || !F.layers.front || !F.layers.mask || H.mode === 'none') return fallback;
       const E = this.eff(F), key = E.key;
       if (F._cof && F._cof.key === key) return F._cof.v;
       let v = fallback; const b = bbox(E.cap);
@@ -1211,8 +1212,8 @@
         o.ms = Math.round(H.ms);
       }
       // whether the funnel and cap ride on the front: found from the marked parts, so the builder matches the studio
-      if (H.mode !== 'none' && F && F.layers && F.layers.cap && F.layers.front) o.funnel = this.capOnFront(F) ? 'front' : 'body';
-      else if (H.funnel) o.funnel = H.funnel;
+      if (H.funnel) o.funnel = H.funnel;
+      else if (H.mode !== 'none' && F && F.layers && F.layers.cap && F.layers.front) o.funnel = this.capOnFront(F) ? 'front' : 'body';
       if (H.mode === 'slide' && H.grow != null) o.grow = H.grow;
       return o;
     }
