@@ -656,11 +656,11 @@
       this.q('lays').innerHTML = `<h4>Layers for ${esc(F.name)}</h4>${row('mask', 'Grinder', !!F.layers.mask)}${row('front', 'Front assembly', !!F.layers.front)}${row('knob', 'Accent piece', !!F.knobEll)}${row('cap', 'Funnel cap', !!F.layers.cap)}${row('face', 'Burr chamber', !!F.faceEll)}${F.recolor ? row('paint', 'Painted parts', !!F.layers.paint) : ''}`;
     }
     go(i) {
-      this.step = clamp(i, 0, STEPS.length - 1); this.poly = null; this.moreOpen = false;
+      this.step = clamp(i, 0, STEPS.length - 1); this.poly = null; this.lineA = null; this.moreOpen = false;
       if (STEPS[this.step].k === 'front') this.fsub = this.f.layers.front && this.hinge !== 'none' ? 'open' : 'mark';
       this.tool = this.defaultTool(); this.renderAll();
     }
-    goSub(v) { this.fsub = v; this.poly = null; this.moreOpen = false; this.tool = this.defaultTool(); this.renderAll(); }
+    goSub(v) { this.fsub = v; this.poly = null; this.lineA = null; this.moreOpen = false; this.tool = this.defaultTool(); this.renderAll(); }
     defaultTool() { return { photo: 'pan', mask: 'keep', front: this.fsub === 'open' && this.hinge !== 'none' ? 'hinge' : this.f.layers.front ? 'keep' : 'rect', knob: 'ellipse', cap: 'rect', face: 'ellipse', save: 'pan' }[STEPS[this.step].k]; }
 
     /* ---------- toolbar ---------- */
@@ -689,8 +689,9 @@
         + (shapey ? `<span class="zs-seg zs-shape" role="group" aria-label="What the shape does"><button type="button" data-m="add" aria-pressed="${this.mode === 'add'}" title="Add area: the shape adds what it surrounds" aria-label="Add area">+ Area</button><button type="button" data-m="sub" aria-pressed="${this.mode === 'sub'}" title="Remove area: the shape takes away what it surrounds" aria-label="Remove area">&minus; Area</button></span>` : '')
         + (smart ? `<label class="zs-snap" title="On: the stroke hugs the nearest edge in the photo. Off: it paints exactly where you drag."><input type="checkbox" data-r="snap" ${this.snap ? 'checked' : ''}>Snap to edges</label>` : '')
         + (brushy ? `<label title="[ and ] change the size">Size <input type="range" min="4" max="120" value="${this.brush}" data-r="brush"></label>` : '')
+        + (this.tool === 'line' ? `<span class="zs-hint" role="status">${this.lineA ? 'Now click the other end of the edge' : 'Straight edge: click one end of a straight edge'}</span>` : '')
         + `<span class="zs-ur"><button type="button" class="zs-tool" data-act="undo" ${this.undoStack.length ? '' : 'disabled'} title="Undo (Ctrl+Z)">Undo</button><button type="button" class="zs-tool" data-act="redo" ${this.redoStack.length ? '' : 'disabled'} title="Redo (Ctrl+Shift+Z)">Redo</button></span>`;
-      $$('[data-t]', this.q('tools')).forEach((b) => { b.onclick = () => { this.tool = b.dataset.t; this.poly = null; if (this.tool === 'points') this.ensureVec(); if (this.tool === 'mesh') this.ensureMesh(); this.renderTools(); this.draw(); }; });
+      $$('[data-t]', this.q('tools')).forEach((b) => { b.onclick = () => { this.tool = b.dataset.t; this.poly = null; this.lineA = null; if (this.tool === 'points') this.ensureVec(); if (this.tool === 'mesh') this.ensureMesh(); this.renderTools(); this.draw(); }; });
       $$('[data-m]', this.q('tools')).forEach((b) => { b.onclick = () => { this.mode = b.dataset.m; this.renderTools(); }; });
       const mb = $('[data-act="moreTools"]', this.q('tools')); if (mb) mb.onclick = () => { this.moreOpen = !open; this.renderTools(); };
       const br = this.q('brush'); if (br) br.oninput = () => { this.brush = +br.value; };
@@ -710,7 +711,8 @@
         : this.step < STEPS.length - 1 ? `<button type="button" class="zs-btn primary full" data-act="next">Next: ${STEPS[this.step + 1].n}</button>` : '';
       // the Edge slider: grow or shrink the outline by a few pixels. It changes the saved art, not the shape you drew.
       const edgeSlider = (lk, min, max, label, help) => F.layers[lk] ? `<label class="zs-field"><span data-lab="edge-${lk}">${label}: ${edgeTxt(F.edge[lk])}</span><input type="range" min="${min}" max="${max}" step="1" value="${F.edge[lk] || 0}" data-edge="${lk}"><small>${help}</small></label>` : '';
-      const edges = (lk) => `<button type="button" class="zs-btn full" data-act="crisp" ${F.layers[lk] ? '' : 'disabled'} title="Turns the outline into points you can drag">Make edges crisp</button>
+      const edges = (lk) => `<button type="button" class="zs-btn full" data-act="straight" aria-pressed="${this.tool === 'line'}" ${F.layers[lk] ? '' : 'disabled'} title="Click two points along an edge that should be straight, such as the base. The outline between them becomes a straight line.">Straighten an edge</button>
+        <button type="button" class="zs-btn full" data-act="crisp" ${F.layers[lk] ? '' : 'disabled'} title="Turns the outline into points you can drag">Make edges crisp</button>
         <details class="zs-more"><summary>Fine-tune edges</summary>
         <label class="zs-field"><span>Detail</span><input type="range" min="0.4" max="4" step="0.1" value="${(4.4 - this.detail).toFixed(1)}" data-in="detail"><small>Left: fewer points, smoother lines. Right: more points that follow every bump.</small></label>
         <label class="zs-field"><span>Edge softness</span><input type="range" min="0" max="2" step="0.1" value="${this.feather}" data-in="feather"><small>0 is razor sharp. 0.5 to 1 matches a photo's natural edge.</small></label>
@@ -846,6 +848,7 @@
       }
       act('auto', () => this.runAuto('mask', {}));
       act('crisp', () => this.makeCrisp());
+      act('straight', () => { this.tool = this.tool === 'line' ? this.defaultTool() : 'line'; this.lineA = null; this.poly = null; this.renderTools(); this.renderSide(); this.draw(); });
       act('copy', () => this.copyStep());
       act('mesh', () => { this.tool = this.tool === 'mesh' ? (STEPS[this.step].k === 'knob' ? 'ellipse' : 'rect') : 'mesh'; this.ensureMesh(); this.renderTools(); this.renderSide(); this.draw(); });
       act('meshReset', () => { this.pushUndo(); if (STEPS[this.step].k === 'knob') F.knobMesh = null; else F.capMesh = null; this.ensureMesh(); this.changed(); this.renderSide(); });
@@ -1289,6 +1292,10 @@
       if (k === 'front' && this.fsub === 'open' && this.hinge !== 'none' && C.cut && !this.playing) this.paintHinge(x, F, P);
       if (this.lasso && this.lasso.length > 1) { x.strokeStyle = '#fff'; x.setLineDash([5, 4]); x.lineWidth = 1.5; x.beginPath(); this.lasso.forEach((p, i) => x[i ? 'lineTo' : 'moveTo'](...P(...p))); x.stroke(); x.setLineDash([]); }
       if (this.poly && this.poly.length) { x.strokeStyle = '#fff'; x.lineWidth = 1.5; x.beginPath(); this.poly.forEach((p, i) => x[i ? 'lineTo' : 'moveTo'](...P(...p))); if (this.hover) x.lineTo(...P(...this.hover)); x.stroke(); this.poly.forEach((p, i) => { x.fillStyle = i ? '#fff' : '#ffd400'; x.fillRect(P(...p)[0] - 3, P(...p)[1] - 3, 6, 6); }); }
+      if (this.tool === 'line' && this.lineA) {   // the straight edge so far: from the first point to the pointer
+        const [ax, ay] = P(...this.lineA); x.strokeStyle = '#ffd400'; x.lineWidth = 2; x.beginPath(); x.moveTo(ax, ay); if (this.hover) x.lineTo(...P(...this.hover)); x.stroke();
+        x.fillStyle = '#ffd400'; x.strokeStyle = '#1a1a1a'; x.lineWidth = 1.5; x.beginPath(); x.arc(ax, ay, 5, 0, Math.PI * 2); x.fill(); x.stroke();
+      }
       if (this.rectDrag) { const [a, b] = this.rectDrag, [ax, ay] = P(...a), [bx, by] = P(...b); x.strokeStyle = '#fff'; x.setLineDash([6, 4]); x.lineWidth = 1.5; x.strokeRect(ax, ay, bx - ax, by - ay); x.setLineDash([]); }
       if (this.hover && ['keep', 'remove', 'paint', 'erase'].includes(this.tool)) { const [hx, hy] = P(...this.hover); x.strokeStyle = this.tool === 'keep' ? '#00c853' : this.tool === 'remove' ? '#ff1744' : '#fff'; x.lineWidth = 1.5; x.beginPath(); x.arc(hx, hy, this.brush / 2, 0, Math.PI * 2); x.stroke(); }
     }
@@ -1363,7 +1370,7 @@
     bindPointer() {
       const v = this.q('view');
       v.addEventListener('wheel', (e) => { e.preventDefault(); const [, , sx, sy] = this.toImg(e); this.zoomBy(Math.exp(-e.deltaY * 0.0015), sx, sy); }, { passive: false });
-      v.addEventListener('pointermove', (e) => { const [X, Y] = this.toImg(e); this.hover = [X, Y]; if (!this.drag && (this.poly || ['keep', 'remove', 'paint', 'erase'].includes(this.tool))) this.draw(); });
+      v.addEventListener('pointermove', (e) => { const [X, Y] = this.toImg(e); this.hover = [X, Y]; if (!this.drag && (this.poly || this.lineA || ['keep', 'remove', 'paint', 'erase'].includes(this.tool))) this.draw(); });
       v.addEventListener('pointerleave', () => { this.hover = null; this.draw(); });
       v.addEventListener('dblclick', (e) => {
         const [X, Y] = this.toImg(e);
@@ -1440,6 +1447,11 @@
           end(() => { const pts = this.lasso; this.lasso = null; if (pts.length > 2) this.fillShape(pts, sub); else this.draw(); });
           return;
         }
+        if (tool === 'line') {   // Straight edge: the first click starts it, the second makes the outline straight between them
+          if (!lk || !F.layers[lk]) { this.toast('Mark the part first, then straighten its edge.'); return; }
+          if (!this.lineA) this.lineA = [X, Y]; else { const A = this.lineA; this.lineA = null; this.straighten(A, [X, Y]); }
+          this.renderTools(); this.draw(); return;
+        }
         if (tool === 'poly') {
           if (!this.poly) this.poly = [];
           const first = this.poly[0];
@@ -1508,6 +1520,25 @@
         }
       });
     }
+    /* make the outline straight between two points on an edge: in a thin band along the line, the side the part is on
+       is filled and the other side is cleared, so a wavy cut (often along a base's shadow) becomes one clean line */
+    straighten(A, B) {
+      const F = this.f, lk = this.layerKey, L = F.layers[lk]; if (!L) return;
+      const len = Math.hypot(B[0] - A[0], B[1] - A[1]); if (len * this.view.s < 12) return;
+      const d = [(B[0] - A[0]) / len, (B[1] - A[1]) / len], n = [-d[1], d[0]], w = Math.max(4, 14 / this.view.s);
+      // which side is the part: compare the outline on both sides of the line
+      const at = (X, Y) => (X < 0 || Y < 0 || X >= L.width || Y >= L.height ? 0 : ctxR(L).getImageData(Math.floor(X), Math.floor(Y), 1, 1).data[3]);
+      let pos = 0, neg = 0; for (let t = 0.1; t < 0.95; t += 0.1) { const X = A[0] + (B[0] - A[0]) * t, Y = A[1] + (B[1] - A[1]) * t; pos += at(X + n[0] * w * 0.7, Y + n[1] * w * 0.7); neg += at(X - n[0] * w * 0.7, Y - n[1] * w * 0.7); }
+      if (Math.abs(pos - neg) < 9 * 60) { this.toast('Click two points along an edge of the part, one at each end of the straight part.'); return; }
+      const s = pos > neg ? 1 : -1, side = (k) => [[...A], [...B], [B[0] + n[0] * w * k, B[1] + n[1] * w * k], [A[0] + n[0] * w * k, A[1] + n[1] * w * k]];
+      this.pushUndo();
+      const c = this.editable(lk), g = c.getContext('2d'), quad = (q) => { g.beginPath(); q.forEach((p, i) => g[i ? 'lineTo' : 'moveTo'](...p)); g.closePath(); g.fill(); };
+      g.fillStyle = '#fff';
+      g.globalCompositeOperation = 'destination-out'; quad(side(-s));   // clear the outside first, then fill the inside, so the line itself stays solid
+      g.globalCompositeOperation = 'source-over'; quad(side(s));
+      if (lk !== 'mask' && lk !== 'knob' && F.layers.mask) F.layers[lk] = combine(F.layers[lk], F.layers.mask, 'destination-in');
+      F.vec[lk] = null; this.changed(F); this.renderSide(); this.renderLayers();
+    }
     hintRect(h) { const b = bbox(h); return b ? { x: b.x - b.w * 0.15, y: b.y - b.h * 0.15, w: b.w * 1.3, h: b.h * 1.3 } : null; }
     closePoly() { const pts = this.poly; this.poly = null; if (pts && pts.length > 2) this.fillShape(pts, this.polySub); else this.draw(); }
     fillShape(pts, sub) {
@@ -1538,7 +1569,7 @@
         if (!mod && (key === 'b' || key === 'e')) { const t = key === 'b' ? 'keep' : 'remove'; if ($(`[data-t="${t}"]`, this.q('tools'))) { this.tool = t; this.poly = null; this.renderTools(); this.draw(); } }
         if (!mod && (key === '[' || key === ']')) { this.brush = clamp(Math.round(this.brush * (key === ']' ? 1.2 : 0.83)), 4, 120); const br = this.q('brush'); if (br) br.value = this.brush; this.draw(); }
         if (e.key === 'Enter' && this.poly) this.closePoly();
-        if (e.key === 'Escape') { this.poly = null; this.draw(); }
+        if (e.key === 'Escape') { this.poly = null; if (this.lineA) { this.lineA = null; this.renderTools(); } this.draw(); }
         if ((e.key === 'Delete' || e.key === 'Backspace') && this.sel && this.tool === 'points') {
           const F = this.f, lk = this.layerKey, V = F.vec[lk]; if (!V) return; e.preventDefault();
           this.pushUndo(); F.vec[lk] = JSON.parse(JSON.stringify(V)); const r = F.vec[lk].rings[this.sel[0]]; if (r.pts.length > 3) r.pts.splice(this.sel[1], 1); this.sel = null; this.fromVec(lk);
