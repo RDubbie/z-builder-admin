@@ -645,7 +645,7 @@
       ${slider('rt', 'How far it stands out', 0, 15, 0.5, (rim0.t != null ? rim0.t * 100 : 7).toFixed(1) + '%', 'data-rim', rim0.t != null ? rim0.t * 100 : 7)}
       ${slider('rs', 'Edge shade <span class="muted">(light to dark)</span>', 0, 70, 1, Math.round(rim0.shade != null ? rim0.shade * 100 : 30) + '%', 'data-rim', rim0.shade != null ? rim0.shade * 100 : 30)}
       ${slider('rl', 'Lip it seats into', 0, 8, 0.5, (rim0.lip != null ? rim0.lip * 100 : 3).toFixed(1) + '%', 'data-rim', rim0.lip != null ? rim0.lip * 100 : 3)}
-      <div class="field"><span class="lbl">Lip color <span class="muted">(match the dial in each photo)</span></span><div class="row2">${fins.map((f) => `<label class="field"><span class="lbl">${esc(f.replace(/-/g, ' '))}</span><input type="color" data-lipc="${esc(f)}" value="${esc((g.geom[f].knob.rim || {}).color || (/white|cream|ivory/.test(f) ? '#d0d1cc' : '#3c3a3d'))}"></label>`).join('')}</div></div>
+      <div class="field"><span class="lbl">Lip color <span class="muted">(match the dial in each photo)</span></span><div class="row2">${fins.map((f) => `<label class="field"><span class="lbl">${esc(f.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()))}</span><input type="color" data-lipc="${esc(f)}" value="${esc((g.geom[f].knob.rim || {}).color || (/white|cream|ivory/.test(f) ? '#d0d1cc' : '#3c3a3d'))}"></label>`).join('')}</div></div>
       <div class="pv hpv"><div class="pvb" id="hprev"></div></div></div>`;
     // preview: the real builder on this grinder, with a burr and an accent piece, so Play shows exactly what customers see
     const C = { blockId: 'hinge', preview: true, grinderKey: g.key, catalog: A.cat, assetBase: 'preview/catalog.js', installedImage: null, included: [],
