@@ -309,3 +309,21 @@ input:hover:not(:focus):not([disabled]),select:hover:not(:focus):not([disabled])
 .tabs button:hover{color:var(--p-text)}
 input::placeholder,textarea::placeholder{color:#8a8a8a}
 .field{align-content:start}
+
+/* Phones and the Shopify mobile app: 44 px touch targets for the nav, tabs, buttons, menus and text boxes.
+   Dense score tables keep their compact boxes. */
+@media (max-width:760px){
+  #nav button,.tabs button,.seg button{min-height:44px}
+  .btn,.btn.sm,.inrow .btn{min-height:44px}
+  .ic,.modal .mh .ic{min-width:44px;min-height:44px}
+  input[type=text],input[type=number],input:not([type]),input[type=url],input[type=email],input[type=search],.toolbar input[type=search]{min-height:44px}
+  select:not([multiple]):not(.pill),select.pill{height:44px;min-height:44px}
+  .page table select:not(.pill),.vals select:not(.pill),.fitg select:not(.pill){height:30px;min-height:30px}
+  .page .fitg input{min-height:28px}
+  /* an empty list shows its message in full instead of a wide, empty table */
+  table.list:has(td.empty){min-width:0}
+  table.list:has(td.empty) thead{display:none}
+}
+/* the App Bridge title bar shows in the Shopify header; until App Bridge loads, its buttons stay hidden instead of
+   showing as plain buttons on the page (the page has the same actions) */
+ui-title-bar:not(:defined){display:none}

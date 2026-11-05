@@ -264,6 +264,9 @@
   async function route() {
     const r = readRoute(); A.view = r.view; A.sub = r.sub; A.set = null;
     $$('#nav button').forEach((b) => b.setAttribute('aria-current', b.dataset.v === A.view ? 'page' : 'false'));
+    // on a phone the nav scrolls sideways: keep the current page in view
+    const cur = $('#nav button[aria-current="page"]'), top = cur && cur.closest('.top');
+    if (top && top.scrollWidth > top.clientWidth) top.scrollLeft += cur.getBoundingClientRect().left - top.getBoundingClientRect().left - 12;
     body().innerHTML = spin();
     try { await ensureCatalog(); } catch (e) { body().innerHTML = errBox(e); return; }
     const ext = window.ZBAdminCatalog || {};
