@@ -808,8 +808,8 @@
       $$('[data-fsub]', side).forEach((b) => { b.onclick = () => this.goSub(b.dataset.fsub); });
       $$('[data-edge]', side).forEach((el) => {
         const lk = el.dataset.edge;
-        el.onpointerdown = () => this.pushUndo();
-        el.oninput = () => { F.edge = { ...F.edge, [lk]: +el.value }; const l = $(`[data-lab="edge-${lk}"]`, side); if (l) l.textContent = l.textContent.replace(/:.*$/, ': ' + edgeTxt(+el.value)); clearTimeout(this._eg); this._eg = setTimeout(() => this.changed(F), 40); };
+        el.onchange = () => { this._gest = false; };
+        el.oninput = () => { this.undoOnce(); F.edge = { ...F.edge, [lk]: +el.value }; const l = $(`[data-lab="edge-${lk}"]`, side); if (l) l.textContent = l.textContent.replace(/:.*$/, ': ' + edgeTxt(+el.value)); clearTimeout(this._eg); this._eg = setTimeout(() => this.changed(F), 40); };
       });
       act('upload', async () => { const file = await pickFile(); if (file) this.setPhoto(URL.createObjectURL(file)); });
       act('shopify', () => this.setPhoto(F.image));
@@ -844,12 +844,13 @@
       });
       act('play', () => this.play());
       act('saveOpening', () => this.saveOpening());
-      act('pivotReset', () => { this.H.pivotPx = null; this.H.pivotPct = null; this.dirty = true; this.renderSide(); this.draw(); });
-      act('dirReset', () => { this.H.dir = null; this.dirty = true; this.renderSide(); this.draw(); });
-      $$('[data-hinge]', side).forEach((b) => { b.onclick = () => { this.hinge = b.dataset.hinge; this.dirty = true; if (STEPS[this.step].k === 'front') { if (this.hinge === 'none') this.fsub = 'open'; else if (!F.layers.front) this.fsub = 'mark'; this.tool = this.defaultTool(); } this.renderTools(); this.renderSide(); this.refreshSteps(); this.draw(); }; });
+      act('pivotReset', () => { this.pushUndo(); this.H.pivotPx = null; this.H.pivotPct = null; this.dirty = true; this.renderSide(); this.draw(); });
+      act('dirReset', () => { this.pushUndo(); this.H.dir = null; this.dirty = true; this.renderSide(); this.draw(); });
+      $$('[data-hinge]', side).forEach((b) => { b.onclick = () => { if (this.hinge !== b.dataset.hinge) this.pushUndo(); this.hinge = b.dataset.hinge; this.dirty = true; if (STEPS[this.step].k === 'front') { if (this.hinge === 'none') this.fsub = 'open'; else if (!F.layers.front) this.fsub = 'mark'; this.tool = this.defaultTool(); } this.renderTools(); this.renderSide(); this.refreshSteps(); this.draw(); }; });
       $$('[data-prev]', side).forEach((s) => { s.onchange = () => { if (s.dataset.prev === 'acc') this.prevAcc = s.value; else this.prevCap = s.value; this.draw(); if (STEPS[this.step].k === 'cap') this.drawBand(); }; });
       $$('[data-in]', side).forEach((el) => {
         const k = el.dataset.in;
+        if (/^h[A-Z]/.test(k)) el.onchange = () => { this._gest = false; };
         el[el.type === 'checkbox' || el.tagName === 'SELECT' ? 'onchange' : 'oninput'] = () => {
           const v = el.type === 'checkbox' ? el.checked : el.type === 'range' || el.tagName === 'SELECT' ? +el.value : el.value;
           if (k === 'smooth') { const lk = this.layerKey, V = F.vec[lk]; if (V) { V.smooth = v; this.fromVec(lk); } return; }
@@ -857,6 +858,7 @@
           if (k === 'detail') { this.detail = 4.4 - v; clearTimeout(this._dt); this._dt = setTimeout(() => { if (F.vec[this.layerKey]) this.makeCrisp(true); }, 250); return; }
           if (k === 'meshN') { this.meshN = v; this.pushUndo(); if (STEPS[this.step].k === 'knob') F.knobMesh = null; else F.capMesh = null; this.ensureMesh(); this.changed(); return; }
           const lab = (t) => { const l = $(`[data-lab="${k}"]`, side); if (l) l.innerHTML = t; this.dirty = true; this.draw(); };
+          if (/^h[A-Z]/.test(k)) this.undoOnce();
           if (k === 'hAngle') { this.H.angle = v; return lab(`Opening angle: ${r2(v)}&deg;`); }
           if (k === 'hDist') { this.H.dist = v; return lab(`How far it slides: ${r2(v)}%`); }
           if (k === 'hDir') { this.H.dir = v; const b = $('[data-act="dirReset"]', side); if (b) b.disabled = false; return lab(`Direction: ${Math.round(v)}&deg;`); }
@@ -1009,12 +1011,13 @@
     state(slug = this.cur) {
       const F = this.F[slug];
       return { slug, layers: { ...F.layers }, hints: { ...F.hints }, vec: JSON.stringify(F.vec), knobEll: F.knobEll && { ...F.knobEll }, faceEll: F.faceEll && { ...F.faceEll },
-        band: F.band && F.band.slice(), knobMesh: JSON.stringify(F.knobMesh), capMesh: JSON.stringify(F.capMesh), photo: F.photo, recolor: F.recolor, edge: { ...F.edge } };
+        band: F.band && F.band.slice(), knobMesh: JSON.stringify(F.knobMesh), capMesh: JSON.stringify(F.capMesh), photo: F.photo, recolor: F.recolor, edge: { ...F.edge }, H: JSON.stringify(this.H) };
     }
     restore(u) {
       const F = this.F[u.slug]; this.cur = u.slug;
       Object.assign(F, { layers: u.layers, hints: u.hints, vec: JSON.parse(u.vec), knobEll: u.knobEll, faceEll: u.faceEll, band: u.band, knobMesh: JSON.parse(u.knobMesh), capMesh: JSON.parse(u.capMesh), photo: u.photo, recolor: u.recolor, edge: u.edge });
       if (!F.layers.paint) F.recolor = null;
+      if (u.H) this.H = JSON.parse(u.H);
       this.changed(F); this.renderFins(); this.renderAll();
     }
     pushUndo() {
@@ -1022,6 +1025,8 @@
       if (this.undoStack.length > 30) this.undoStack.shift();
       const b = $('[data-act="undo"]', this.q('tools')); if (b) b.disabled = false;
     }
+    // a slider move by mouse, touch or keyboard is one undo step; its change event ends the move
+    undoOnce() { if (!this._gest) { this.pushUndo(); this._gest = true; } }
     undo() { const u = this.undoStack.pop(); if (!u) return; this.redoStack.push(this.state(u.slug)); this.restore(u); }
     redo() { const u = this.redoStack.pop(); if (!u) return; this.undoStack.push(this.state(u.slug)); this.restore(u); }
     // raster edits draw on a copy, so undo keeps the old canvas
@@ -1334,6 +1339,7 @@
         if (k === 'front' && this.fsub === 'open' && this.hinge !== 'none' && F.layers.mask) {
           const h = this.hingeHandle(F), near = Math.hypot((h.p[0] - X) * this.view.s, (h.p[1] - Y) * this.view.s) < 14;
           if (near || tool === 'hinge') {
+            this.pushUndo();
             const set = (mx, my) => {
               if (h.kind === 'pivot') { this.H.pivotPx = [mx, my]; this.H.pivotPct = null; }
               else { const b = this.frameBox(F), ddx = (mx - h.o[0]) / b.BW * 100, ddy = (my - h.o[1]) / b.BH * 100; this.H.dist = clamp(r2(Math.hypot(ddx, ddy)), 0.5, 60); this.H.dir = r2(((deg(Math.atan2(ddy, ddx)) % 360) + 360) % 360); }
