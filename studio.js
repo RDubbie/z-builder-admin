@@ -332,16 +332,17 @@
     if (fg && bg) {
       const src = matRGB(cv, (() => { const o = canvas(w, h); o.getContext('2d').drawImage(img, x0, y0, rw, rh, 0, 0, w, h); return o; })(), w, h), m = new cv.Mat(h, w, cv.CV_8UC1);
       m.data.set(lab);
-      try { grab(cv, src, m, 3); res = m.data.slice(); } finally { src.delete(); m.delete(); }
+      try { grab(cv, src, m, 2); res = m.data.slice(); } finally { src.delete(); m.delete(); }
     }
     [inS, outS, dIn, dOut].forEach((x) => x.delete());
-    // the new edge, only inside the zone, scaled back to the photo
-    const P = canvas(w, h), Z = canvas(w, h), pd = ctxR(P).createImageData(w, h), zd = ctxR(Z).createImageData(w, h);
-    for (let i = 0; i < n; i++) { pd.data[i * 4] = pd.data[i * 4 + 1] = pd.data[i * 4 + 2] = zd.data[i * 4] = zd.data[i * 4 + 1] = zd.data[i * 4 + 2] = 255; zd.data[i * 4 + 3] = zone[i] ? 255 : 0; pd.data[i * 4 + 3] = zone[i] && (res[i] & 1) ? 255 : 0; }
-    ctxR(P).putImageData(pd, 0, 0); ctxR(Z).putImageData(zd, 0, 0);
+    // the new edge, only inside the zone, scaled back to the photo. Add only adds and Remove only takes away,
+    // so a stroke never brings back backdrop (Remove) or bites into the part (Add) next to it.
+    const P = canvas(w, h), pd = ctxR(P).createImageData(w, h);
+    for (let i = 0; i < n; i++) { pd.data[i * 4] = pd.data[i * 4 + 1] = pd.data[i * 4 + 2] = 255; pd.data[i * 4 + 3] = zone[i] && (add ? res[i] & 1 : !(res[i] & 1)) ? 255 : 0; }
+    ctxR(P).putImageData(pd, 0, 0);
     const out = layer ? copyCanvas(layer) : canvas(W, H), x = out.getContext('2d');
-    x.globalCompositeOperation = 'destination-out'; x.drawImage(Z, x0, y0, rw, rh);
-    x.globalCompositeOperation = 'source-over'; x.drawImage(P, x0, y0, rw, rh);
+    x.globalCompositeOperation = add ? 'source-over' : 'destination-out'; x.drawImage(P, x0, y0, rw, rh);
+    x.globalCompositeOperation = 'source-over';
     return out;
   }
   /* GrabCut at 640px, then again at up to 1400px around the edge, then vector rings at full size. */
@@ -1917,6 +1918,6 @@
     openTexture: (host, opts) => new TexEditor(host, opts),
     openCutout: (host, opts) => new CutoutEditor(host, opts),
     loadCV,
-    _internals: { autoCut, autoCutBest, renderRings, vectorize, knobShade, capShade, texSquare, drawMesh, hingeFrom, poseAt, chamberAt }
+    _internals: { autoCut, autoCutBest, snapStroke, renderRings, vectorize, knobShade, capShade, texSquare, drawMesh, hingeFrom, poseAt, chamberAt }
   };
 })();
