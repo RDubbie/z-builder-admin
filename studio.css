@@ -113,3 +113,24 @@
 .zs-pre{display:flex;gap:5px;flex-wrap:wrap}
 .zs-pre button{width:22px;height:22px;border-radius:50%;border:1px solid rgba(0,0,0,.25);cursor:pointer;padding:0}
 .zs-pre button:hover{outline:2px solid #303030;outline-offset:1px}
+
+/* simpler toolbar: the few tools a step needs, the rest under More tools */
+.zs-tool{min-height:32px}
+.zs-tool:focus-visible,.zs-btn:focus-visible,.zs-seg button:focus-visible,.zs-steps button:focus-visible,.zs-more summary:focus-visible{outline:2px solid var(--zs-blue);outline-offset:1px}
+.zs-moreb{color:var(--zs-muted)}
+.zs-moreb::after{content:"";width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-2px);margin-left:4px}
+.zs-moreb[aria-expanded="true"]::after{transform:rotate(-135deg) translateY(-1px)}
+.zs-moreset{display:inline-flex;gap:4px;padding-left:4px;border-left:1px dashed var(--zs-line)}
+.zs-tools .zs-snap{color:var(--zs-text);font-weight:550;cursor:pointer;gap:5px}
+.zs-snap input{accent-color:#303030;margin:0}
+.zs-tool[disabled]:hover{background:none}
+/* folded settings in the side panel */
+.zs-more{border:1px solid var(--zs-line);border-radius:8px;padding:0 10px}
+.zs-more summary{cursor:pointer;font-weight:550;padding:8px 0;list-style:none;display:flex;align-items:center;justify-content:space-between}
+.zs-more summary::-webkit-details-marker{display:none}
+.zs-more summary::after{content:"";width:6px;height:6px;border-right:1.5px solid var(--zs-muted);border-bottom:1.5px solid var(--zs-muted);transform:rotate(45deg)}
+.zs-more[open] summary::after{transform:rotate(-135deg)}
+.zs-more[open]{padding-bottom:10px}
+.zs-more[open]>*:not(summary){margin-top:10px}
+.zs-sub2 button{font-size:12px;padding:7px 4px}
+.zs-sub2 button[disabled]{opacity:.45;cursor:default}

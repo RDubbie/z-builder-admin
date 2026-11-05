@@ -18,8 +18,8 @@
   const BAND = [0.08, 0.40, 0.84, 0.20];
   const STEPS = [
     { k: 'photo', n: 'Photo', d: 'One photo per color' },
-    { k: 'mask', n: 'Cut out grinder', d: 'Remove the background' },
-    { k: 'front', n: 'Front assembly', d: 'The part that opens' },
+    { k: 'mask', n: 'Cut out', d: 'Remove the background' },
+    { k: 'front', n: 'Front part', d: 'What opens, and how' },
     { k: 'knob', n: 'Accent piece', d: 'Where the wood shows' },
     { k: 'cap', n: 'Funnel cap', d: 'The cap on the funnel' },
     { k: 'face', n: 'Burr chamber', d: 'What shows when open' },
@@ -34,6 +34,7 @@
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const r3 = (v) => Math.round(v * 1000) / 1000;
   const r2 = (v) => Math.round(v * 100) / 100;
+  const edgeTxt = (v) => (!v ? 'as drawn' : v > 0 ? `${v} px more` : `${-v} px less`);
   const deg = (r) => r * 180 / Math.PI, rad = (d) => d * Math.PI / 180;
   function canvas(w, h) { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
   const ctxR = (c) => c.getContext('2d', { willReadFrequently: true });
@@ -293,6 +294,56 @@
     for (let i = 0; i < w * h; i++) m.data[i] = d[i * 4 + 3] >= thr ? 255 : 0;
     return m;
   }
+  /* grow (px > 0) or shrink (px < 0) a mask: unions or overlaps of copies nudged in 8 directions, 1.5 px at a time */
+  function growMask(src, px) {
+    if (!src || !px) return src;
+    let cur = src, left = Math.abs(px);
+    while (left > 0.01) {
+      const r = Math.min(1.5, left), out = copyCanvas(cur), x = out.getContext('2d');
+      x.globalCompositeOperation = px > 0 ? 'source-over' : 'destination-in';
+      for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; x.drawImage(cur, r * Math.cos(a), r * Math.sin(a)); }
+      cur = out; left -= r;
+    }
+    return cur;
+  }
+  /* Add or Remove with "Snap to edges": GrabCut only around the stroke. The middle of the stroke is certain, the rest
+     of the brush and a ring around it follow the photo's edges, and everything farther away stays as it was. */
+  async function snapStroke(img, layer, stroke, add, r) {
+    const { cv } = await loadCV();
+    const W = img.width, H = img.height, b = bbox(stroke, 8); if (!b) return layer;
+    const pad = Math.max(24, r * 2.5), x0 = Math.max(0, Math.floor(b.x - pad)), y0 = Math.max(0, Math.floor(b.y - pad));
+    const rw = Math.min(W, Math.ceil(b.x + b.w + pad)) - x0, rh = Math.min(H, Math.ceil(b.y + b.h + pad)) - y0;
+    const s = Math.min(1, 900 / Math.max(rw, rh)), w = Math.max(4, Math.round(rw * s)), h = Math.max(4, Math.round(rh * s)), n = w * h;
+    const crop = (c) => { const o = canvas(w, h), x = ctxR(o); x.drawImage(c, x0, y0, rw, rh, 0, 0, w, h); return x.getImageData(0, 0, w, h).data; };
+    const st = crop(stroke), ly = layer ? crop(layer) : new Uint8ClampedArray(n * 4);
+    const inS = new cv.Mat(h, w, cv.CV_8UC1), outS = new cv.Mat(h, w, cv.CV_8UC1), dIn = new cv.Mat(), dOut = new cv.Mat();
+    for (let i = 0; i < n; i++) { const on = st[i * 4 + 3] > 64; inS.data[i] = on ? 255 : 0; outS.data[i] = on ? 0 : 255; }
+    cv.distanceTransform(inS, dIn, cv.DIST_L2, 3); cv.distanceTransform(outS, dOut, cv.DIST_L2, 3);
+    const rs = r * s, lab = new Uint8Array(n), zone = new Uint8Array(n);
+    let fg = 0, bg = 0;
+    for (let i = 0; i < n; i++) {
+      const cur = ly[i * 4 + 3] >= 128, inside = inS.data[i];
+      if (inside) { zone[i] = 1; lab[i] = dIn.data32F[i] > rs * 0.5 ? (add ? 1 : 0) : (add ? 3 : 2); }
+      else if (dOut.data32F[i] < rs * 1.2) { zone[i] = 1; lab[i] = cur ? 3 : 2; }
+      else lab[i] = cur ? 1 : 0;
+      if (lab[i] & 1) fg++; else bg++;
+    }
+    let res = lab;
+    if (fg && bg) {
+      const src = matRGB(cv, (() => { const o = canvas(w, h); o.getContext('2d').drawImage(img, x0, y0, rw, rh, 0, 0, w, h); return o; })(), w, h), m = new cv.Mat(h, w, cv.CV_8UC1);
+      m.data.set(lab);
+      try { grab(cv, src, m, 3); res = m.data.slice(); } finally { src.delete(); m.delete(); }
+    }
+    [inS, outS, dIn, dOut].forEach((x) => x.delete());
+    // the new edge, only inside the zone, scaled back to the photo
+    const P = canvas(w, h), Z = canvas(w, h), pd = ctxR(P).createImageData(w, h), zd = ctxR(Z).createImageData(w, h);
+    for (let i = 0; i < n; i++) { pd.data[i * 4] = pd.data[i * 4 + 1] = pd.data[i * 4 + 2] = zd.data[i * 4] = zd.data[i * 4 + 1] = zd.data[i * 4 + 2] = 255; zd.data[i * 4 + 3] = zone[i] ? 255 : 0; pd.data[i * 4 + 3] = zone[i] && (res[i] & 1) ? 255 : 0; }
+    ctxR(P).putImageData(pd, 0, 0); ctxR(Z).putImageData(zd, 0, 0);
+    const out = layer ? copyCanvas(layer) : canvas(W, H), x = out.getContext('2d');
+    x.globalCompositeOperation = 'destination-out'; x.drawImage(Z, x0, y0, rw, rh);
+    x.globalCompositeOperation = 'source-over'; x.drawImage(P, x0, y0, rw, rh);
+    return out;
+  }
   /* GrabCut at 640px, then again at up to 1400px around the edge, then vector rings at full size. */
   async function autoCut(img, o = {}) {
     const { cv } = await loadCV();
@@ -454,14 +505,14 @@
       this.H = hingeFrom(this.g.geom || {}, this.cur);
       this.view = { s: 1, x: 0, y: 0 }; this.brush = 26; this.feather = 0.6; this.detail = 1.2; this.contrast = 0.45; this.side = 0.55; this.meshN = 3;
       this.showBg = true; this.previewOpen = false; this.previewNoCap = false; this.showPaint = true; this.sharePaint = true;
-      this.undoStack = []; this.texCache = new Map(); this.drag = null; this.poly = null; this.keys = {};
+      this.undoStack = []; this.redoStack = []; this.snap = true; this.fsub = 'mark'; this.texCache = new Map(); this.drag = null; this.poly = null; this.keys = {};
       this.accents = (this.o.accents || []).filter((a) => a && a.image); this.caps = (this.o.caps || []).filter((a) => a && a.image);
       this.prevAcc = this.accents[0] ? String(this.accents[0].id) : ''; this.prevCap = this.caps[0] ? String(this.caps[0].id) : '';
       this.mount(); this.loadExisting();
     }
     get hinge() { return this.H.mode; }
     set hinge(v) { this.H.mode = v; }
-    blank(f) { return { ...f, fromArt: false, photo: null, recolor: null, layers: { mask: null, front: null, knob: null, cap: null, paint: null }, vec: {}, hints: {}, knobEll: null, faceEll: null, band: null, knobMesh: null, capMesh: null, uncapped: null, uncappedMask: null, steel: null, capMetalImg: null, ver: 0 }; }
+    blank(f) { return { ...f, fromArt: false, photo: null, recolor: null, layers: { mask: null, front: null, knob: null, cap: null, paint: null }, vec: {}, hints: {}, knobEll: null, faceEll: null, band: null, knobMesh: null, capMesh: null, uncapped: null, uncappedMask: null, steel: null, capMetalImg: null, edge: { mask: 0, front: 0, cap: 0 }, ver: 0 }; }
     get f() { return this.F[this.cur]; }
     // in step 1 of a finish made from another one, the brushes edit its painted parts
     get layerKey() { const k = STEPS[this.step].k; return { mask: 'mask', front: 'front', knob: 'knob', cap: 'cap' }[k] || (k === 'photo' && this.f.recolor ? 'paint' : null); }
@@ -491,7 +542,7 @@
           Object.assign(F, {
             fromArt: S.fromArt, layers: { mask: cp(S.layers.mask), front: cp(S.layers.front), knob: cp(S.layers.knob), cap: cp(S.layers.cap), paint: null },
             vec: deep(S.vec) || {}, hints: {}, knobEll: S.knobEll && { ...S.knobEll }, faceEll: S.faceEll && { ...S.faceEll }, band: S.band && S.band.slice(),
-            knobMesh: deep(S.knobMesh), capMesh: deep(S.capMesh), uncapped: S.uncapped, uncappedMask: S.uncappedMask, steel: S.steel, capMetalImg: S.capMetalImg
+            knobMesh: deep(S.knobMesh), capMesh: deep(S.capMesh), edge: { ...S.edge }, uncapped: S.uncapped, uncappedMask: S.uncappedMask, steel: S.steel, capMetalImg: S.capMetalImg
           });
           const ls = meanLum(S.photo, S.layers.mask);
           const other = this.fins.map((f) => this.F[f.slug]).find((G) => G !== S && G !== F && !G.recolor && G.photo && G.layers.mask && G.photo.width === S.photo.width && G.photo.height === S.photo.height && Math.abs(meanLum(G.photo, G.layers.mask) - ls) > 35);
@@ -513,7 +564,7 @@
       this.pushUndo();
       const cp = copyCanvas, deep = (o) => (o ? JSON.parse(JSON.stringify(o)) : o);
       Object.assign(F, { layers: { mask: cp(S.layers.mask), front: cp(S.layers.front), knob: cp(S.layers.knob), cap: cp(S.layers.cap), paint: null },
-        vec: deep(S.vec) || {}, hints: {}, knobEll: S.knobEll && { ...S.knobEll }, faceEll: S.faceEll && { ...S.faceEll }, band: S.band && S.band.slice(), knobMesh: deep(S.knobMesh), capMesh: deep(S.capMesh) });
+        vec: deep(S.vec) || {}, hints: {}, knobEll: S.knobEll && { ...S.knobEll }, faceEll: S.faceEll && { ...S.faceEll }, band: S.band && S.band.slice(), knobMesh: deep(S.knobMesh), capMesh: deep(S.capMesh), edge: { ...S.edge } });
       this.changed(F); this.renderAll(); this.toast(`Shapes copied from ${S.name}. Check each step: anything that moved between the photos can be fixed there.`);
     }
     findPaintAgain() {
@@ -580,31 +631,48 @@
       const F = this.f, row = (k, n, on) => `<label><i style="background:${COL[k]}"></i>${n}<span style="margin-left:auto;color:${on ? '#29845a' : '#8a8a8a'}">${on ? 'Set' : 'Not set'}</span></label>`;
       this.q('lays').innerHTML = `<h4>Layers for ${esc(F.name)}</h4>${row('mask', 'Grinder', !!F.layers.mask)}${row('front', 'Front assembly', !!F.layers.front)}${row('knob', 'Accent piece', !!F.knobEll)}${row('cap', 'Funnel cap', !!F.layers.cap)}${row('face', 'Burr chamber', !!F.faceEll)}${F.recolor ? row('paint', 'Painted parts', !!F.layers.paint) : ''}`;
     }
-    go(i) { this.step = clamp(i, 0, STEPS.length - 1); this.poly = null; this.tool = this.defaultTool(); this.renderAll(); }
-    defaultTool() { return { photo: 'pan', mask: 'keep', front: this.f.layers.front && this.hinge !== 'none' ? 'hinge' : 'lasso', knob: 'ellipse', cap: 'rect', face: 'ellipse', save: 'pan' }[STEPS[this.step].k]; }
+    go(i) {
+      this.step = clamp(i, 0, STEPS.length - 1); this.poly = null; this.moreOpen = false;
+      if (STEPS[this.step].k === 'front') this.fsub = this.f.layers.front && this.hinge !== 'none' ? 'open' : 'mark';
+      this.tool = this.defaultTool(); this.renderAll();
+    }
+    goSub(v) { this.fsub = v; this.poly = null; this.moreOpen = false; this.tool = this.defaultTool(); this.renderAll(); }
+    defaultTool() { return { photo: 'pan', mask: 'keep', front: this.fsub === 'open' && this.hinge !== 'none' ? 'hinge' : this.f.layers.front ? 'keep' : 'rect', knob: 'ellipse', cap: 'rect', face: 'ellipse', save: 'pan' }[STEPS[this.step].k]; }
 
     /* ---------- toolbar ---------- */
     renderTools() {
       const k = STEPS[this.step].k; if (!this.tool) this.tool = this.defaultTool();
       const T = (id, label, dot, title) => `<button type="button" class="zs-tool" data-t="${id}" aria-pressed="${this.tool === id}" title="${esc(title || label)}">${dot ? `<span class="dot" style="background:${dot}"></span>` : ''}${label}</button>`;
-      const sets = {
-        photo: this.f.recolor ? [T('paint', 'Add color', COL.paint, 'Paint where the new color goes'), T('erase', 'Remove color', '', 'Paint where the source photo should stay, such as steel'), T('lasso', 'Lasso'), T('poly', 'Polygon'), '<span class="sep"></span>', T('pan', 'Move view')] : [T('pan', 'Move view')],
-        mask: [T('keep', 'Keep', '#00c853', 'Paint over parts to keep. The cut-out updates when you let go.'), T('remove', 'Remove', '#ff1744', 'Paint over background to remove. The cut-out updates when you let go.'), '<span class="sep"></span>', T('paint', 'Paint'), T('erase', 'Erase'), T('lasso', 'Lasso'), T('poly', 'Polygon'), T('points', 'Edit points'), '<span class="sep"></span>', T('pan', 'Move view')],
-        front: [T('hinge', 'Hinge', '#e8a33a', 'Drag the hinge point or the slide arrow. Click to place it.'), '<span class="sep"></span>', T('rect', 'Box select', '', 'Draw a box around the part. The app finds it inside the box.'), T('keep', 'Keep', '#00c853'), T('remove', 'Remove', '#ff1744'), '<span class="sep"></span>', T('lasso', 'Lasso'), T('poly', 'Polygon'), T('paint', 'Paint'), T('erase', 'Erase'), T('points', 'Edit points'), '<span class="sep"></span>', T('pan', 'Move view')],
-        knob: [T('ellipse', 'Ellipse'), T('rect', 'Find in box', '', 'Draw a box around the accent piece. The app fits the ellipse.'), T('mesh', 'Mold'), '<span class="sep"></span>', T('paint', 'Add edge', '', 'Paint the visible side of the piece'), T('erase', 'Erase edge'), '<span class="sep"></span>', T('pan', 'Move view')],
-        cap: [T('rect', 'Box select'), T('keep', 'Keep', '#00c853'), T('remove', 'Remove', '#ff1744'), '<span class="sep"></span>', T('lasso', 'Lasso'), T('poly', 'Polygon'), T('paint', 'Paint'), T('erase', 'Erase'), T('points', 'Edit points'), T('mesh', 'Mold'), '<span class="sep"></span>', T('pan', 'Move view')],
-        face: [T('ellipse', 'Ellipse'), '<span class="sep"></span>', T('pan', 'Move view')],
-        save: [T('pan', 'Move view')]
+      const add = (what) => T('keep', 'Add', '#00c853', `Paint over ${what} to add it (B)`), rem = (what) => T('remove', 'Remove', '#ff1744', `Paint over ${what} to take it away (E)`);
+      const lasso = T('lasso', 'Lasso', '', 'Draw around an area by hand'), poly = T('poly', 'Polygon', '', 'Click corner by corner. Click the first corner or press Enter to close.'), pts = T('points', 'Edit points', '', 'Drag the outline points. Double-click to add one, Delete to remove one.');
+      // the few tools each step needs; the rest wait under More tools
+      const [main, more] = {
+        photo: this.f.recolor ? [[T('paint', 'Add color', COL.paint, 'Paint where the new color goes'), T('erase', 'Remove color', '', 'Paint where the source photo should stay, such as steel')], [lasso, poly]] : [[], []],
+        mask: [[add('parts of the grinder'), rem('background')], [lasso, poly, pts]],
+        front: this.fsub === 'open' ? [[T('hinge', 'Move hinge', '#e8a33a', 'Drag the hinge point or the slide arrow. Click to place it.')], []]
+          : [[T('rect', 'Box select', '', 'Draw a box around the front. The app finds it inside the box.'), add('the front'), rem('what should stay still')], [lasso, poly, pts]],
+        knob: [[T('ellipse', 'Ellipse', '', 'Drag to draw. Drag the dots to size and turn it.'), T('rect', 'Find in box', '', 'Draw a box around the accent piece. The app fits the ellipse.'), T('mesh', 'Mold')], [T('paint', 'Add edge', '', 'Paint the visible side of the piece'), T('erase', 'Erase edge')]],
+        cap: [[T('rect', 'Box select', '', 'Draw a box around the cap. The app finds it inside the box.'), add('the cap'), rem('what is not the cap')], [lasso, poly, pts, T('mesh', 'Mold')]],
+        face: [[T('ellipse', 'Ellipse', '', 'Drag to draw. Drag the dots to size and turn it.')], []],
+        save: [[], []]
       }[k];
-      const brushy = ['keep', 'remove', 'paint', 'erase'].includes(this.tool), shapey = ['lasso', 'poly'].includes(this.tool);
-      this.q('tools').innerHTML = sets.join('') + `<span style="flex:1"></span>`
+      const extra = more.join(''), open = this.moreOpen || more.some((h) => h.includes(`data-t="${this.tool}"`));
+      const brushy = ['keep', 'remove', 'paint', 'erase'].includes(this.tool), shapey = ['lasso', 'poly'].includes(this.tool), smart = ['keep', 'remove'].includes(this.tool);
+      this.q('tools').innerHTML = main.join('')
+        + (extra ? `<button type="button" class="zs-tool zs-moreb" data-act="moreTools" aria-expanded="${open}">More tools</button>${open ? `<span class="zs-moreset">${extra}</span>` : ''}` : '')
+        + (main.length || extra ? '<span class="sep"></span>' : '') + T('pan', 'Move view', '', 'Drag the photo around. Or hold Space with any tool.')
+        + '<span style="flex:1"></span>'
         + (shapey ? `<span class="zs-seg" style="width:150px"><button type="button" data-m="add" aria-pressed="${this.mode === 'add'}">Add</button><button type="button" data-m="sub" aria-pressed="${this.mode === 'sub'}">Remove</button></span>` : '')
-        + (brushy ? `<label>Brush <input type="range" min="4" max="120" value="${this.brush}" data-r="brush"></label>` : '')
-        + `<button type="button" class="zs-tool" data-act="undo" ${this.undoStack.length ? '' : 'disabled'} title="Undo (Ctrl+Z)">Undo</button>`;
+        + (smart ? `<label class="zs-snap" title="On: the stroke hugs the nearest edge in the photo. Off: it paints exactly where you drag."><input type="checkbox" data-r="snap" ${this.snap ? 'checked' : ''}>Snap to edges</label>` : '')
+        + (brushy ? `<label title="[ and ] change the size">Size <input type="range" min="4" max="120" value="${this.brush}" data-r="brush"></label>` : '')
+        + `<button type="button" class="zs-tool" data-act="undo" ${this.undoStack.length ? '' : 'disabled'} title="Undo (Ctrl+Z)">Undo</button><button type="button" class="zs-tool" data-act="redo" ${this.redoStack.length ? '' : 'disabled'} title="Redo (Ctrl+Shift+Z)">Redo</button>`;
       $$('[data-t]', this.q('tools')).forEach((b) => { b.onclick = () => { this.tool = b.dataset.t; this.poly = null; if (this.tool === 'points') this.ensureVec(); if (this.tool === 'mesh') this.ensureMesh(); this.renderTools(); this.draw(); }; });
       $$('[data-m]', this.q('tools')).forEach((b) => { b.onclick = () => { this.mode = b.dataset.m; this.renderTools(); }; });
+      const mb = $('[data-act="moreTools"]', this.q('tools')); if (mb) mb.onclick = () => { this.moreOpen = !open; this.renderTools(); };
       const br = this.q('brush'); if (br) br.oninput = () => { this.brush = +br.value; };
+      const sn = this.q('snap'); if (sn) sn.onchange = () => { this.snap = sn.checked; };
       $('[data-act="undo"]', this.q('tools')).onclick = () => this.undo();
+      $('[data-act="redo"]', this.q('tools')).onclick = () => this.redo();
       this.q('view').className = 'zs-view' + (this.tool === 'pan' ? ' pan' : '');
     }
 
@@ -614,13 +682,15 @@
       const others = this.fins.filter((f) => f.slug !== this.cur && this.stepDone(this.step, this.F[f.slug]) && this.F[f.slug].photo);
       const copyBtn = others.length && k !== 'photo' && k !== 'save' && F.photo ? `<button type="button" class="zs-btn full" data-act="copy">Copy this step from ${esc(others[0].name)}</button>` : '';
       const needPhoto = !F.photo && k !== 'photo' ? `<p class="zs-warn">Add a photo for ${esc(F.name)} first (step 1).</p>` : '';
-      const next = this.step < STEPS.length - 1 ? `<button type="button" class="zs-btn primary full" data-act="next">Next: ${STEPS[this.step + 1].n}</button>` : '';
-      const edges = (lk) => `<div class="zs-k">Edges</div>
-        <button type="button" class="zs-btn full" data-act="crisp" ${F.layers[lk] ? '' : 'disabled'}>Make edges crisp</button>
+      const next = k === 'front' && this.fsub === 'mark' && this.hinge !== 'none' ? `<button type="button" class="zs-btn primary full" data-act="next" ${F.layers.front ? '' : 'disabled'}>Next: How it opens</button>`
+        : this.step < STEPS.length - 1 ? `<button type="button" class="zs-btn primary full" data-act="next">Next: ${STEPS[this.step + 1].n}</button>` : '';
+      // the Edge slider: grow or shrink the outline by a few pixels. It changes the saved art, not the shape you drew.
+      const edgeSlider = (lk, min, max, label, help) => F.layers[lk] ? `<label class="zs-field"><span data-lab="edge-${lk}">${label}: ${edgeTxt(F.edge[lk])}</span><input type="range" min="${min}" max="${max}" step="1" value="${F.edge[lk] || 0}" data-edge="${lk}"><small>${help}</small></label>` : '';
+      const edges = (lk) => `<button type="button" class="zs-btn full" data-act="crisp" ${F.layers[lk] ? '' : 'disabled'} title="Turns the outline into points you can drag">Make edges crisp</button>
+        <details class="zs-more"><summary>Fine-tune edges</summary>
         <label class="zs-field"><span>Detail</span><input type="range" min="0.4" max="4" step="0.1" value="${(4.4 - this.detail).toFixed(1)}" data-in="detail"><small>Left: fewer points, smoother lines. Right: more points that follow every bump.</small></label>
         <label class="zs-field"><span>Edge softness</span><input type="range" min="0" max="2" step="0.1" value="${this.feather}" data-in="feather"><small>0 is razor sharp. 0.5 to 1 matches a photo's natural edge.</small></label>
-        <label class="zs-check"><input type="checkbox" data-in="smooth" ${!F.vec[lk] || F.vec[lk].smooth !== false ? 'checked' : ''}><span>Smooth curves between points</span></label>
-        ${F.hints[lk] ? '<button type="button" class="zs-btn full" data-act="clearHints">Clear Keep and Remove marks</button>' : ''}`;
+        <label class="zs-check"><input type="checkbox" data-in="smooth" ${!F.vec[lk] || F.vec[lk].smooth !== false ? 'checked' : ''}><span>Smooth curves between points</span></label></details>`;
       let h = '';
       if (k === 'photo') {
         h = `<h3>1. Photo for ${esc(F.name)}</h3><p>Use a sharp, evenly lit photo of the grinder on a plain background. Every color must use the same framing, so the shapes line up.</p>
@@ -631,32 +701,41 @@
           ${this.shapeDonor(F) ? `<div class="zs-k">Same framing as ${esc(this.shapeDonor(F).name)}?</div><p>Use its cut-out, front assembly, accent piece, funnel cap and burr chamber, so this color needs only the photo.</p><button type="button" class="zs-btn primary full" data-act="useShapes">Use the shapes from ${esc(this.shapeDonor(F).name)}</button>` : ''}
           ${this.madePanel(F)}`;
       } else if (k === 'mask') {
-        h = `<h3>2. Cut out the grinder</h3><p>The app finds the grinder and removes the background. Then fix any spot with the Keep and Remove brushes: paint over it and let go.</p>
-          <button type="button" class="zs-btn primary full" data-act="auto" ${F.photo ? '' : 'disabled'}>${F.layers.mask ? 'Cut out again' : 'Cut out automatically'}</button>
+        h = `<h3>2. Cut out the grinder</h3><p>${F.layers.mask ? 'Fix any spot: paint over it with <b>Add</b> or <b>Remove</b>. With Snap to edges on, the stroke hugs the nearest edge in the photo.' : 'The app finds the grinder and removes the background.'}</p>
+          <button type="button" class="zs-btn ${F.layers.mask ? '' : 'primary '}full" data-act="auto" ${F.photo ? '' : 'disabled'}>${F.layers.mask ? 'Cut out again from scratch' : 'Cut out automatically'}</button>
+          ${edgeSlider('mask', -6, 6, 'Outline', 'Left trims a light halo off the edge. Right keeps more of the edge.')}
           <label class="zs-check"><input type="checkbox" data-in="showBg" ${this.showBg ? 'checked' : ''}><span>Show the removed background faintly</span></label>
-          ${edges('mask')}`;
+          ${F.layers.mask ? edges('mask') : ''}`;
       } else if (k === 'front') {
-        h = `<h3>3. Front assembly</h3><p>Mark the part that opens to show the burrs: the dial, the accent piece and everything that moves with them. Then set how it opens.</p>
-          ${this.openingPanel()}
-          ${this.hinge === 'none' ? '<p class="zs-tip">The burr falls into the accent piece instead. Skip to step 4.</p>' : `<p class="zs-tip">Tip: draw a box around the front, or trace it with the Lasso. Hold Shift with the Lasso to remove.</p>${edges('front')}`}`;
+        const sub = `<div class="zs-seg zs-sub2">${[['mark', '1. Mark the front'], ['open', '2. How it opens']].map(([v, n]) => `<button type="button" data-fsub="${v}" aria-pressed="${this.fsub === v}" ${v === 'open' && !F.layers.front && this.hinge !== 'none' ? 'disabled' : ''}>${n}</button>`).join('')}</div>`;
+        h = this.fsub === 'open' || this.hinge === 'none'
+          ? `<h3>3. Front part</h3>${sub}<p>Set how the front moves when a customer picks a burr. Play it to check.</p>${this.openingPanel()}
+            ${this.hinge === 'none' ? '<p class="zs-tip">The burr falls into the accent piece instead. Go on to step 4.</p>' : ''}`
+          : `<h3>3. Front part</h3>${sub}<p>Mark the part that opens to show the burrs: the dial, the accent piece and everything that moves with them.</p>
+            <p class="zs-tip">${F.layers.front ? 'Paint over a spot with Add or Remove to fix it.' : 'Draw a box around the front. The app finds it inside the box.'}</p>
+            ${edgeSlider('front', 0, 16, 'Take more edge with the front', 'Drag right if a thin line of the front stays behind when it opens. The extra edge comes from the body.')}
+            ${F.layers.front ? edges('front') : ''}
+            <button type="button" class="zs-btn full" data-hinge="none">This grinder does not open</button>`;
       } else if (k === 'knob') {
         const E = F.knobEll;
         h = `<h3>4. Accent piece</h3><p>Fit the ellipse to the face of the wood piece. Drag the middle to move it, the side dots to size it and the top dot to turn it. Paint the edge you can see around the side.</p>
           ${this.previewSelect('acc')}
           ${E ? `<div class="zs-k">Mold the wood</div><p>Use Mold to bend the wood grain so it follows the piece. Drag the grid points.</p>
           <div class="zs-row"><button type="button" class="zs-btn" data-act="mesh">${this.tool === 'mesh' ? 'Done molding' : 'Mold the wood'}</button><button type="button" class="zs-btn" data-act="meshReset" ${F.knobMesh ? '' : 'disabled'}>Reset</button></div>
+          <details class="zs-more"><summary>Fine-tune the wood</summary>
           <label class="zs-field"><span>Grid</span><select data-in="meshN">${[2, 3, 4, 5].map((n) => `<option value="${n}" ${this.meshN === n ? 'selected' : ''}>${n} x ${n}</option>`).join('')}</select></label>
           <div class="zs-k">Light and shadow</div>
           <label class="zs-field"><span>Shading strength</span><input type="range" min="0" max="1" step="0.05" value="${this.contrast}" data-in="contrast"><small>Taken from the photo. Higher shows more of the photo's highlights and shadows.</small></label>
-          <label class="zs-field"><span>Edge darkness</span><input type="range" min="0.3" max="1" step="0.05" value="${this.side}" data-in="side"></label>` : '<p class="zs-tip">Draw the ellipse over the wood face, or use Find in box.</p>'}`;
+          <label class="zs-field"><span>Edge darkness</span><input type="range" min="0.3" max="1" step="0.05" value="${this.side}" data-in="side"></label></details>` : '<p class="zs-tip">Draw the ellipse over the wood face, or use Find in box.</p>'}`;
       } else if (k === 'cap') {
         h = `<h3>5. Funnel cap</h3><p>Mark the cap on top of the funnel. Draw a box around it and the app finds it. Then choose the strip of the cap photo that becomes its edge.</p>
           ${this.previewSelect('cap')}
           ${F.layers.cap ? `<div class="zs-k">Cap edge from the product photo</div><div class="zs-band" data-r="band"><canvas data-r="bandCv" width="240" height="240"></canvas><div class="r" data-r="bandR"><i></i></div></div>
           <div class="zs-row"><button type="button" class="zs-btn" data-act="mesh">${this.tool === 'mesh' ? 'Done molding' : 'Mold the cap'}</button><button type="button" class="zs-btn" data-act="bandReset">Reset strip</button><button type="button" class="zs-btn" data-act="meshReset" ${F.capMesh ? '' : 'disabled'}>Reset mold</button></div>` : ''}
-          <div class="zs-k">Optional photos, same framing</div>
+          ${edgeSlider('cap', -4, 10, 'Cap outline', 'Drag right if a rim of the old cap shows around the new one.')}
+          <details class="zs-more"><summary>Optional photos, same framing</summary>
           <div class="zs-row"><button type="button" class="zs-btn" data-act="uncapped">${F.uncapped ? 'Replace' : 'Add'} a photo without the cap</button>${this.o.pickFile ? '<button type="button" class="zs-btn" data-act="uncappedFiles">From Files</button>' : ''}</div><p style="font-size:12px">Shows the real open funnel for "No cap". Without it the app draws one.</p>
-          <div class="zs-row"><button type="button" class="zs-btn" data-act="steel">${F.steel ? 'Replace' : 'Add'} a photo with the steel cap</button>${this.o.pickFile ? '<button type="button" class="zs-btn" data-act="steelFiles">From Files</button>' : ''}</div>
+          <div class="zs-row"><button type="button" class="zs-btn" data-act="steel">${F.steel ? 'Replace' : 'Add'} a photo with the steel cap</button>${this.o.pickFile ? '<button type="button" class="zs-btn" data-act="steelFiles">From Files</button>' : ''}</div></details>
           ${F.layers.cap ? edges('cap') : ''}`;
       } else if (k === 'face') {
         h = this.hinge === 'none' ? '<h3>6. Burr chamber</h3><p class="zs-tip">This grinder does not open, so it needs no burr chamber. Go to Preview and save.</p>'
@@ -675,6 +754,9 @@
           ${ready.some((r) => r.miss.length && r.G.photo) ? '<p class="zs-warn">Colors with missing steps save what they have. A color without a cut-out shows its plain photo in the builder.</p>' : ''}`;
       }
       side.innerHTML = needPhoto + h + copyBtn + next;
+      // folded sections stay open or closed as the team left them
+      this.detOpen = this.detOpen || {};
+      $$('details.zs-more', side).forEach((d) => { const key = k + ':' + $('summary', d).textContent; d.open = !!this.detOpen[key]; d.ontoggle = () => { this.detOpen[key] = d.open; }; });
       this.bindSide(); if (k === 'cap' && F.layers.cap) this.drawBand();
     }
     /* step 1: make this color from another finish's art, or tune one that was made */
@@ -721,7 +803,13 @@
     }
     bindSide() {
       const side = this.q('side'), F = this.f, act = (n, fn) => { const b = $(`[data-act="${n}"]`, side); if (b) b.onclick = fn; };
-      act('next', () => this.go(this.step + 1));
+      act('next', () => (STEPS[this.step].k === 'front' && this.fsub === 'mark' && this.hinge !== 'none' ? this.goSub('open') : this.go(this.step + 1)));
+      $$('[data-fsub]', side).forEach((b) => { b.onclick = () => this.goSub(b.dataset.fsub); });
+      $$('[data-edge]', side).forEach((el) => {
+        const lk = el.dataset.edge;
+        el.onpointerdown = () => this.pushUndo();
+        el.oninput = () => { F.edge = { ...F.edge, [lk]: +el.value }; const l = $(`[data-lab="edge-${lk}"]`, side); if (l) l.textContent = l.textContent.replace(/:.*$/, ': ' + edgeTxt(+el.value)); clearTimeout(this._eg); this._eg = setTimeout(() => this.changed(F), 40); };
+      });
       act('upload', async () => { const file = await pickFile(); if (file) this.setPhoto(URL.createObjectURL(file)); });
       act('shopify', () => this.setPhoto(F.image));
       act('files', async () => { const u = await this.o.pickFile({ title: `Photo for ${F.name}` }); if (u) this.setPhoto(u); });
@@ -734,7 +822,6 @@
       }
       act('auto', () => this.runAuto('mask', {}));
       act('crisp', () => this.makeCrisp());
-      act('clearHints', () => { this.pushUndo(); F.hints[this.layerKey] = null; this.renderSide(); this.draw(); });
       act('copy', () => this.copyStep());
       act('mesh', () => { this.tool = this.tool === 'mesh' ? (STEPS[this.step].k === 'knob' ? 'ellipse' : 'rect') : 'mesh'; this.ensureMesh(); this.renderTools(); this.renderSide(); this.draw(); });
       act('meshReset', () => { this.pushUndo(); if (STEPS[this.step].k === 'knob') F.knobMesh = null; else F.capMesh = null; this.ensureMesh(); this.changed(); this.renderSide(); });
@@ -758,7 +845,7 @@
       act('saveOpening', () => this.saveOpening());
       act('pivotReset', () => { this.H.pivotPx = null; this.H.pivotPct = null; this.dirty = true; this.renderSide(); this.draw(); });
       act('dirReset', () => { this.H.dir = null; this.dirty = true; this.renderSide(); this.draw(); });
-      $$('[data-hinge]', side).forEach((b) => { b.onclick = () => { this.hinge = b.dataset.hinge; this.dirty = true; if (STEPS[this.step].k === 'front') this.tool = this.defaultTool(); this.renderTools(); this.renderSide(); this.refreshSteps(); this.draw(); }; });
+      $$('[data-hinge]', side).forEach((b) => { b.onclick = () => { this.hinge = b.dataset.hinge; this.dirty = true; if (STEPS[this.step].k === 'front') { if (this.hinge === 'none') this.fsub = 'open'; else if (!F.layers.front) this.fsub = 'mark'; this.tool = this.defaultTool(); } this.renderTools(); this.renderSide(); this.refreshSteps(); this.draw(); }; });
       $$('[data-prev]', side).forEach((s) => { s.onchange = () => { if (s.dataset.prev === 'acc') this.prevAcc = s.value; else this.prevCap = s.value; this.draw(); if (STEPS[this.step].k === 'cap') this.drawBand(); }; });
       $$('[data-in]', side).forEach((el) => {
         const k = el.dataset.in;
@@ -908,7 +995,7 @@
       if (!src || !F.photo) return;
       if (src.photo.width !== F.photo.width || src.photo.height !== F.photo.height) { this.toast('The photos have different sizes, so the shapes cannot be copied.'); return; }
       this.pushUndo();
-      const cpL = (lk) => { F.layers[lk] = copyCanvas(src.layers[lk]); F.vec[lk] = src.vec[lk] ? JSON.parse(JSON.stringify(src.vec[lk])) : null; };
+      const cpL = (lk) => { F.layers[lk] = copyCanvas(src.layers[lk]); F.vec[lk] = src.vec[lk] ? JSON.parse(JSON.stringify(src.vec[lk])) : null; F.edge = { ...F.edge, [lk]: (src.edge || {})[lk] || 0 }; };
       if (k === 'mask' || k === 'front') cpL(k);
       if (k === 'knob') { F.knobEll = src.knobEll && { ...src.knobEll }; F.layers.knob = copyCanvas(src.layers.knob); F.knobMesh = src.knobMesh && JSON.parse(JSON.stringify(src.knobMesh)); }
       if (k === 'cap') { cpL('cap'); F.band = src.band && src.band.slice(); F.capMesh = src.capMesh && JSON.parse(JSON.stringify(src.capMesh)); }
@@ -918,20 +1005,24 @@
     }
 
     /* ---------- undo ---------- */
+    state(slug = this.cur) {
+      const F = this.F[slug];
+      return { slug, layers: { ...F.layers }, hints: { ...F.hints }, vec: JSON.stringify(F.vec), knobEll: F.knobEll && { ...F.knobEll }, faceEll: F.faceEll && { ...F.faceEll },
+        band: F.band && F.band.slice(), knobMesh: JSON.stringify(F.knobMesh), capMesh: JSON.stringify(F.capMesh), photo: F.photo, recolor: F.recolor, edge: { ...F.edge } };
+    }
+    restore(u) {
+      const F = this.F[u.slug]; this.cur = u.slug;
+      Object.assign(F, { layers: u.layers, hints: u.hints, vec: JSON.parse(u.vec), knobEll: u.knobEll, faceEll: u.faceEll, band: u.band, knobMesh: JSON.parse(u.knobMesh), capMesh: JSON.parse(u.capMesh), photo: u.photo, recolor: u.recolor, edge: u.edge });
+      if (!F.layers.paint) F.recolor = null;
+      this.changed(F); this.renderFins(); this.renderAll();
+    }
     pushUndo() {
-      const F = this.f;
-      this.undoStack.push({ slug: this.cur, layers: Object.fromEntries(Object.entries(F.layers).map(([k, v]) => [k, v])), hints: { ...F.hints }, vec: JSON.stringify(F.vec),
-        knobEll: F.knobEll && { ...F.knobEll }, faceEll: F.faceEll && { ...F.faceEll }, band: F.band && F.band.slice(), knobMesh: JSON.stringify(F.knobMesh), capMesh: JSON.stringify(F.capMesh), photo: F.photo });
-      if (this.undoStack.length > 20) this.undoStack.shift();
+      this.undoStack.push(this.state()); this.redoStack = [];
+      if (this.undoStack.length > 30) this.undoStack.shift();
       const b = $('[data-act="undo"]', this.q('tools')); if (b) b.disabled = false;
     }
-    undo() {
-      const u = this.undoStack.pop(); if (!u) return;
-      const F = this.F[u.slug]; this.cur = u.slug;
-      Object.assign(F, { layers: u.layers, hints: u.hints, vec: JSON.parse(u.vec), knobEll: u.knobEll, faceEll: u.faceEll, band: u.band, knobMesh: JSON.parse(u.knobMesh), capMesh: JSON.parse(u.capMesh), photo: u.photo });
-      if (!F.layers.paint) F.recolor = null;
-      this.changed(F); this.renderAll();
-    }
+    undo() { const u = this.undoStack.pop(); if (!u) return; this.redoStack.push(this.state(u.slug)); this.restore(u); }
+    redo() { const u = this.redoStack.pop(); if (!u) return; this.undoStack.push(this.state(u.slug)); this.restore(u); }
     // raster edits draw on a copy, so undo keeps the old canvas
     editable(lk) { const F = this.f; F.layers[lk] = F.layers[lk] ? copyCanvas(F.layers[lk]) : canvas(F.photo.width, F.photo.height); return F.layers[lk]; }
 
@@ -961,7 +1052,7 @@
       if (F._cache && F._cache.key === key) return F._cache;
       if (!window.cv || !window.cv.Mat) { loadCV().then(() => this.draw()).catch(() => {}); return null; }
       const out = { key };
-      try { if (F.knobEll) out.knob = knobShade(window.cv, F, { contrast: this.contrast, side: this.side }); if (F.layers.cap && F.layers.mask) out.cap = capShade(window.cv, F); } catch (e) { console.warn('[Art studio]', e); }
+      try { if (F.knobEll) out.knob = knobShade(window.cv, F, { contrast: this.contrast, side: this.side }); if (F.layers.cap && F.layers.mask) out.cap = capShade(window.cv, this.withEff(F)); } catch (e) { console.warn('[Art studio]', e); }
       F._cache = out; return out;
     }
     knobCanvas(F, sh) {
@@ -981,20 +1072,30 @@
       if (F.capMesh) drawMesh(x, sq, F.capMesh, w, h, b[0] * T, b[1] * T, b[2] * T, b[3] * T); else x.drawImage(sq, b[0] * T, b[1] * T, b[2] * T, b[3] * T, 0, 0, w, h);
       shade(x, w, h, D, L); return { c, cl, ct };
     }
+    /* the Edge sliders: each outline grows or shrinks by a few pixels, so a loose cut still carries its edges.
+       The front takes the extra edge from the body, so nothing stays behind when it opens. */
+    eff(F = this.f) {
+      const e = F.edge || {}, L = F.layers, key = [F.ver, e.mask, e.front, e.cap].join(':');
+      if (F._eff && F._eff.key === key && F._eff.src === L.mask) return F._eff;
+      const mask = growMask(L.mask, e.mask), front = L.front ? combine(growMask(L.front, e.front), mask, 'destination-in') : null, cap = L.cap ? combine(growMask(L.cap, e.cap), mask, 'destination-in') : null;
+      F._eff = { key, src: L.mask, mask, front, cap }; return F._eff;
+    }
+    withEff(F) { const E = this.eff(F); return { ...F, layers: { ...F.layers, mask: E.mask, front: E.front, cap: E.cap } }; }
     cutCache(F) {
       if (F._cut && F._cut.ver === F.ver) return F._cut;
-      const cut = F.layers.mask ? masked(F.photo, F.layers.mask) : null;
-      const t = {}; ['mask', 'front', 'knob', 'cap', 'paint'].forEach((k) => { if (F.layers[k]) t[k] = tint(F.layers[k], COL[k]); });
+      const E = F.layers.mask ? this.eff(F) : {}, cut = F.layers.mask ? masked(F.photo, E.mask) : null;
+      const t = {}; ['mask', 'front', 'knob', 'cap', 'paint'].forEach((k) => { const l = E[k] || F.layers[k]; if (l) t[k] = tint(l, COL[k]); });
       const hint = {}; Object.entries(F.hints).forEach(([k, v]) => { if (v) hint[k] = v; });
       F._cut = { ver: F.ver, cut, t, hint }; return F._cut;
     }
     /* the still parts (body, plus the cap on the Z1 kind) and the moving part (front, accent piece, plus the cap on the Z2 kind) */
     parts(F, sh, { noCap = false } = {}) {
       const W = F.photo.width, H = F.photo.height, still = canvas(W, H), move = canvas(W, H), xs = still.getContext('2d'), xm = move.getContext('2d');
-      let body = F.layers.mask; if (F.layers.front && this.hinge !== 'none') body = combine(body, F.layers.front, 'destination-out'); if (F.layers.cap) body = combine(body, F.layers.cap, 'destination-out');
-      const front = F.layers.front && this.hinge !== 'none' ? masked(F.photo, combine(F.layers.front, F.layers.mask, 'destination-in')) : null;
+      const E = this.eff(F);
+      let body = E.mask; if (E.front && this.hinge !== 'none') body = combine(body, E.front, 'destination-out'); if (E.cap) body = combine(body, E.cap, 'destination-out');
+      const front = E.front && this.hinge !== 'none' ? masked(F.photo, E.front) : null;
       xs.drawImage(masked(F.photo, body), 0, 0);
-      const drawCap = (x) => { if (noCap) { if (sh && sh.cap) { const [ox, oy, ow, oh] = sh.cap.nonePos; x.drawImage(F.uncapped && F.uncappedMask ? this.uncappedPatch(F, sh.cap) : sh.cap.none, ox, oy, ow, oh); } } else { const cc = this.capCanvas(F, sh); if (cc) x.drawImage(cc.c, cc.cl, cc.ct); else if (F.layers.cap) x.drawImage(masked(F.photo, F.layers.cap), 0, 0); } };
+      const drawCap = (x) => { if (noCap) { if (sh && sh.cap) { const [ox, oy, ow, oh] = sh.cap.nonePos; x.drawImage(F.uncapped && F.uncappedMask ? this.uncappedPatch(F, sh.cap) : sh.cap.none, ox, oy, ow, oh); } } else { const cc = this.capCanvas(F, sh); if (cc) x.drawImage(cc.c, cc.cl, cc.ct); else if (E.cap) x.drawImage(masked(F.photo, E.cap), 0, 0); } };
       if (this.hinge === 'slide') drawCap(xs);
       if (front) xm.drawImage(front, 0, 0);
       const kc = this.knobCanvas(F, sh); if (kc) xm.drawImage(kc.c, kc.x0, kc.y0);
@@ -1119,7 +1220,7 @@
         if (k === 'mask') { x.globalAlpha = 0.12; x.drawImage(C.t.mask, 0, 0); x.globalAlpha = 1; }
         if (k === 'front' && C.t.front) {
           x.globalAlpha = 0.38; x.drawImage(C.t.front, 0, 0); x.globalAlpha = 1;
-          if (this.hinge !== 'none') { x.save(); x.globalAlpha = 0.3; this.applyPose(x, this.openPose(F), F); x.drawImage(C.t.front, 0, 0); x.restore(); }   // where it ends up when open
+          if (this.hinge !== 'none' && this.fsub === 'open') { x.save(); x.globalAlpha = 0.3; this.applyPose(x, this.openPose(F), F); x.drawImage(C.t.front, 0, 0); x.restore(); }   // where it ends up when open
         }
         if (k === 'knob') { const kc = this.knobCanvas(F, this.shading(F)); if (kc) x.drawImage(kc.c, kc.x0, kc.y0); if (C.t.knob) { x.globalAlpha = 0.35; x.drawImage(C.t.knob, 0, 0); x.globalAlpha = 1; } }
         if (k === 'cap') { const cc = this.capCanvas(F, this.shading(F)); if (cc) x.drawImage(cc.c, cc.cl, cc.ct); if (C.t.cap) { x.globalAlpha = cc ? 0.18 : 0.45; x.drawImage(C.t.cap, 0, 0); x.globalAlpha = 1; } }
@@ -1133,7 +1234,7 @@
       if (k === 'knob' && F.knobEll) { this.paintEllipse(x, F.knobEll, COL.knob, P, this.tool === 'ellipse'); if (this.tool === 'mesh' && F.knobMesh) this.paintMesh(x, F.knobMesh.n, F.knobMesh.uv.map(([u, v]) => ellPoint(F.knobEll, u, v)), P); }
       if (k === 'cap' && this.tool === 'mesh' && F.capMesh) { const sh = this.shading(F); if (sh && sh.cap) { const { cl, ct, w, h } = sh.cap; this.paintMesh(x, F.capMesh.n, F.capMesh.pts.map(([fx, fy]) => [cl + fx * w, ct + fy * h]), P); } }
       if (k === 'face' && F.faceEll && this.hinge !== 'none') this.paintEllipse(x, F.faceEll, COL.face, P, this.tool === 'ellipse', true);
-      if (k === 'front' && this.hinge !== 'none' && C.cut && !this.playing) this.paintHinge(x, F, P);
+      if (k === 'front' && this.fsub === 'open' && this.hinge !== 'none' && C.cut && !this.playing) this.paintHinge(x, F, P);
       if (this.lasso && this.lasso.length > 1) { x.strokeStyle = '#fff'; x.setLineDash([5, 4]); x.lineWidth = 1.5; x.beginPath(); this.lasso.forEach((p, i) => x[i ? 'lineTo' : 'moveTo'](...P(...p))); x.stroke(); x.setLineDash([]); }
       if (this.poly && this.poly.length) { x.strokeStyle = '#fff'; x.lineWidth = 1.5; x.beginPath(); this.poly.forEach((p, i) => x[i ? 'lineTo' : 'moveTo'](...P(...p))); if (this.hover) x.lineTo(...P(...this.hover)); x.stroke(); this.poly.forEach((p, i) => { x.fillStyle = i ? '#fff' : '#ffd400'; x.fillRect(P(...p)[0] - 3, P(...p)[1] - 3, 6, 6); }); }
       if (this.rectDrag) { const [a, b] = this.rectDrag, [ax, ay] = P(...a), [bx, by] = P(...b); x.strokeStyle = '#fff'; x.setLineDash([6, 4]); x.lineWidth = 1.5; x.strokeRect(ax, ay, bx - ax, by - ay); x.setLineDash([]); }
@@ -1218,7 +1319,7 @@
         if (this.tool === 'points') this.insertPoint(X, Y);
       });
       v.addEventListener('pointerdown', (e) => {
-        const F = this.f; if (!F.photo) return;
+        const F = this.f; if (!F.photo || e.target.closest('.zs-zoom')) return;   // the zoom buttons are not part of the photo
         v.setPointerCapture(e.pointerId);
         const [X, Y, sx, sy] = this.toImg(e), tool = (e.button === 1 || this.keys.space) ? 'pan' : this.tool;
         const end = (fn) => { const up = () => { v.removeEventListener('pointermove', mv); v.removeEventListener('pointerup', up); v.removeEventListener('pointercancel', up); this.drag = null; fn && fn(); }; v.addEventListener('pointerup', up); v.addEventListener('pointercancel', up); };
@@ -1229,7 +1330,7 @@
           v.addEventListener('pointermove', mv); this.drag = 'pan'; end(() => v.classList.remove('panning')); return;
         }
         const lk = this.layerKey, k = STEPS[this.step].k;
-        if (k === 'front' && this.hinge !== 'none' && F.layers.mask) {
+        if (k === 'front' && this.fsub === 'open' && this.hinge !== 'none' && F.layers.mask) {
           const h = this.hingeHandle(F), near = Math.hypot((h.p[0] - X) * this.view.s, (h.p[1] - Y) * this.view.s) < 14;
           if (near || tool === 'hinge') {
             const set = (mx, my) => {
@@ -1248,21 +1349,34 @@
         if (['keep', 'remove', 'paint', 'erase'].includes(tool)) {
           if (!lk || (lk !== 'mask' && !F.layers.mask)) { this.toast('Cut out the grinder first (step 2).'); return; }
           this.pushUndo();
+          // Add and Remove: a stroke that snaps to the photo's edges when it ends (or paints as drawn with Snap off).
+          // On a part that is not marked yet, Add finds the whole part around the stroke.
           const hint = tool === 'keep' || tool === 'remove';
           let target;
-          if (hint) { F.hints[lk] = F.hints[lk] ? copyCanvas(F.hints[lk]) : canvas(F.photo.width, F.photo.height); target = F.hints[lk]; }
+          if (hint) { F.hints[lk] = canvas(F.photo.width, F.photo.height); target = F.hints[lk]; }
           else { target = this.editable(lk); F.vec[lk] = null; }
           const g = target.getContext('2d'), r = this.brush / 2 / this.view.s;
           g.lineCap = g.lineJoin = 'round'; g.lineWidth = 2 * r;
           g.globalCompositeOperation = tool === 'erase' ? 'destination-out' : 'source-over';
           g.strokeStyle = g.fillStyle = tool === 'keep' ? 'rgb(0,200,83)' : tool === 'remove' ? 'rgb(255,23,68)' : '#fff';
           let last = [X, Y]; g.beginPath(); g.arc(X, Y, r, 0, Math.PI * 2); g.fill();
-          mv = (m) => { const [mx, my] = this.toImg(m); g.beginPath(); g.moveTo(...last); g.lineTo(mx, my); g.stroke(); last = [mx, my]; this.hover = last; F._cut = null; this.draw(); };
+          mv = (m) => { const [mx, my] = this.toImg(m); g.beginPath(); g.moveTo(...last); g.lineTo(mx, my); g.stroke(); last = [mx, my]; this.hover = last; F._cut = null; F._eff = null; this.draw(); };
           v.addEventListener('pointermove', mv); this.drag = 'brush';
-          end(() => {
+          end(async () => {
             g.globalCompositeOperation = 'source-over';
-            if (hint) this.runAuto(lk, F.layers[lk] ? {} : { rect: this.hintRect(F.hints[lk]) });
-            else { if (lk !== 'mask' && F.layers.mask && lk !== 'knob') F.layers[lk] = combine(F.layers[lk], F.layers.mask, 'destination-in'); this.changed(F); this.renderSide(); this.renderLayers(); }
+            if (hint) {
+              const stroke = F.hints[lk], add = tool === 'keep';
+              if (!F.layers[lk]) { if (add) { this.undoStack.pop(); await this.runAuto(lk, { rect: this.hintRect(stroke) }); } F.hints[lk] = null; this.draw(); return; }
+              if (this.snap) {
+                this.busy('Snapping to the edges');
+                try { F.layers[lk] = await snapStroke(F.photo, F.layers[lk], stroke, add, r); } catch (err) { this.toast(err.message); } finally { this.busy(false); }
+              } else {
+                const c = this.editable(lk), x = c.getContext('2d'); x.globalCompositeOperation = add ? 'source-over' : 'destination-out'; x.drawImage(tint(stroke, '#fff'), 0, 0); x.globalCompositeOperation = 'source-over';
+              }
+              F.hints[lk] = null; F.vec[lk] = null;
+            }
+            if (lk !== 'mask' && F.layers.mask && lk !== 'knob') F.layers[lk] = combine(F.layers[lk], F.layers.mask, 'destination-in');
+            this.changed(F); this.renderSide(); this.renderLayers();
           });
           return;
         }
@@ -1365,7 +1479,11 @@
       this._kd = (e) => {
         if (!this.root.isConnected || /INPUT|SELECT|TEXTAREA/.test((e.target || {}).tagName)) return;
         if (e.code === 'Space') { this.keys.space = true; this.q('view').classList.add('pan'); e.preventDefault(); }
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); this.undo(); }
+        const key = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
+        if (mod && (key === 'z' || key === 'y')) { e.preventDefault(); if (key === 'y' || e.shiftKey) this.redo(); else this.undo(); return; }
+        // B and E pick Add and Remove where the step has them; [ and ] size the brush
+        if (!mod && (key === 'b' || key === 'e')) { const t = key === 'b' ? 'keep' : 'remove'; if ($(`[data-t="${t}"]`, this.q('tools'))) { this.tool = t; this.poly = null; this.renderTools(); this.draw(); } }
+        if (!mod && (key === '[' || key === ']')) { this.brush = clamp(Math.round(this.brush * (key === ']' ? 1.2 : 0.83)), 4, 120); const br = this.q('brush'); if (br) br.value = this.brush; this.draw(); }
         if (e.key === 'Enter' && this.poly) this.closePoly();
         if (e.key === 'Escape') { this.poly = null; this.draw(); }
         if ((e.key === 'Delete' || e.key === 'Backspace') && this.sel && this.tool === 'points') {
@@ -1395,11 +1513,11 @@
         if (this.H.pivotPx || this.H.pivotPct) this.H.pivotPx = pv;
         geom.hinge = this.hingeOut({ X0, Y0, BW, BH }, list[0]);
         for (const F of list) {
-          const sh = { knob: F.knobEll ? knobShade(cv, F, { contrast: this.contrast, side: this.side }) : null, cap: F.layers.cap ? capShade(cv, F) : null };
+          const FE = this.withEff(F), sh = { knob: F.knobEll ? knobShade(cv, F, { contrast: this.contrast, side: this.side }) : null, cap: F.layers.cap ? capShade(cv, FE) : null };
           const files = {}, add = (part, c, type = 'png') => { files[part] = null; jobs.push({ F, part, c, type, name: `${key}-${F.slug}-${part.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())}-${ver}.${type}` }); };
-          const front = F.layers.front && this.hinge !== 'none' ? combine(F.layers.front, F.layers.mask, 'destination-in') : null;
-          let body = F.layers.mask; if (front) body = combine(body, front, 'destination-out'); if (sh.cap) body = combine(body, sh.cap.region, 'destination-out');
-          add('photo', crop(F.photo, 'jpg'), 'jpg'); add('mask', crop(F.layers.mask)); add('body', crop(body)); if (front) add('front', crop(front));
+          const front = FE.layers.front && this.hinge !== 'none' ? FE.layers.front : null;
+          let body = FE.layers.mask; if (front) body = combine(body, front, 'destination-out'); if (sh.cap) body = combine(body, sh.cap.region, 'destination-out');
+          add('photo', crop(F.photo, 'jpg'), 'jpg'); add('mask', crop(FE.layers.mask)); add('body', crop(body)); if (front) add('front', crop(front));
           if (F.recolor && F.layers.paint) add('paint', crop(F.layers.paint));   // kept so the next color can use the same painted parts
           const G = {};
           if (sh.knob) {
@@ -1742,7 +1860,7 @@
       v.addEventListener('pointermove', (e) => { if (!this.drag && ['keep', 'remove', 'paint', 'erase'].includes(this.tool)) { this.hover = this.toImg(e).slice(0, 2); this.draw(); } });
       v.addEventListener('pointerleave', () => { this.hover = null; this.draw(); });
       v.addEventListener('pointerdown', (e) => {
-        if (!this.img) return;
+        if (!this.img || e.target.closest('.zs-zoom')) return;
         v.setPointerCapture(e.pointerId);
         const [X, Y] = this.toImg(e), tool = (e.button === 1 || this.keys.space) ? 'pan' : this.tool;
         let mv = () => {};
@@ -1753,7 +1871,8 @@
           if (!hint && !this.mask) return;
           this.pushUndo();
           let target;
-          if (hint) { this.hints = this.hints ? copyCanvas(this.hints) : canvas(this.img.width, this.img.height); target = this.hints; }
+          const snap = hint && this.mask;   // with a cut-out already made, Add and Remove only change the area around the stroke
+          if (hint) { this.hints = this.hints && !snap ? copyCanvas(this.hints) : canvas(this.img.width, this.img.height); target = this.hints; }
           else { this.mask = copyCanvas(this.mask); target = this.mask; this.vec = null; }
           const g = target.getContext('2d'), r = this.brush / 2 / this.view.s;
           g.lineCap = g.lineJoin = 'round'; g.lineWidth = 2 * r; g.globalCompositeOperation = tool === 'erase' ? 'destination-out' : 'source-over';
@@ -1761,7 +1880,13 @@
           let last = [X, Y]; g.beginPath(); g.arc(X, Y, r, 0, Math.PI * 2); g.fill();
           mv = (m) => { const [mx, my] = this.toImg(m); g.beginPath(); g.moveTo(...last); g.lineTo(mx, my); g.stroke(); last = [mx, my]; this.hover = last; this._cutFor = null; this.draw(); };
           v.addEventListener('pointermove', mv); this.drag = 'brush';
-          end(() => { g.globalCompositeOperation = 'source-over'; this._out = null; if (hint) { this.undoStack.pop(); this.auto(); } else { this.draw(); this.preview(); } });
+          end(async () => {
+            g.globalCompositeOperation = 'source-over'; this._out = null;
+            if (snap) {
+              const stroke = this.hints; this.busy('Snapping to the edges');
+              try { this.mask = await snapStroke(this.img, this.mask, stroke, tool === 'keep', r); this.vec = null; } catch (err) { this.undoStack.pop(); } finally { this.hints = null; this.busy(false); this._cutFor = null; this._out = null; this.draw(); this.preview(); }
+            } else if (hint) { this.undoStack.pop(); this.auto(); } else { this.draw(); this.preview(); }
+          });
           return;
         }
         if (tool === 'points' && this.vec) {
