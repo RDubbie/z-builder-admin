@@ -1102,11 +1102,30 @@
       const front = E.front && this.hinge !== 'none' ? masked(F.photo, E.front) : null;
       xs.drawImage(masked(F.photo, body), 0, 0);
       const drawCap = (x) => { if (noCap) { if (sh && sh.cap) { const [ox, oy, ow, oh] = sh.cap.nonePos; x.drawImage(F.uncapped && F.uncappedMask ? this.uncappedPatch(F, sh.cap) : sh.cap.none, ox, oy, ow, oh); } } else { const cc = this.capCanvas(F, sh); if (cc) x.drawImage(cc.c, cc.cl, cc.ct); else if (E.cap) x.drawImage(masked(F.photo, E.cap), 0, 0); } };
-      if (this.hinge === 'slide') drawCap(xs);
+      const onFront = this.capOnFront(F);
+      if (!onFront) drawCap(xs);
       if (front) xm.drawImage(front, 0, 0);
       const kc = this.knobCanvas(F, sh); if (kc) xm.drawImage(kc.c, kc.x0, kc.y0);
-      if (this.hinge !== 'slide') drawCap(xm);
+      if (onFront) drawCap(xm);
       return { still, move, front: !!front };
+    }
+    /* the cap stays on its funnel, as in the builder (geom.hinge.funnel): it rides on the front when the funnel right
+       under it is marked as part of the front, and stays on the body when it is not */
+    capOnFront(F) {
+      const H = this.H, fallback = H.funnel ? H.funnel === 'front' : H.mode !== 'slide';
+      if (!F.photo || !F.layers.cap || !F.layers.front || !F.layers.mask || H.mode === 'none') return fallback;
+      const E = this.eff(F), key = E.key;
+      if (F._cof && F._cof.key === key) return F._cof.v;
+      let v = fallback; const b = bbox(E.cap);
+      if (b && E.front) {
+        const y0 = b.y + b.h, h = Math.min(F.photo.height - y0, Math.max(6, Math.round(b.h * 0.8))), x0 = Math.round(b.x + b.w * 0.2), w = Math.max(1, Math.round(b.w * 0.6));
+        if (h > 0) {
+          const m = ctxR(E.mask).getImageData(x0, y0, w, h).data, f = ctxR(E.front).getImageData(x0, y0, w, h).data;
+          let n = 0, k = 0; for (let i = 3; i < m.length; i += 4) if (m[i] > 127) { n++; if (f[i] > 127) k++; }
+          if (n > 20) v = k / n > 0.5;
+        }
+      }
+      F._cof = { key, v }; return v;
     }
     drawParts(x, F, P, pose, chamber) {
       const E = F.faceEll;
@@ -1179,7 +1198,9 @@
         else if (H.pivotPct) o.pivot = H.pivotPct.map(r3);
         o.ms = Math.round(H.ms);
       }
-      if (H.funnel) o.funnel = H.funnel;                  // whether the funnel and cap ride on the front
+      // whether the funnel and cap ride on the front: found from the marked parts, so the builder matches the studio
+      if (H.mode !== 'none' && F && F.layers && F.layers.cap && F.layers.front) o.funnel = this.capOnFront(F) ? 'front' : 'body';
+      else if (H.funnel) o.funnel = H.funnel;
       if (H.mode === 'slide' && H.grow != null) o.grow = H.grow;
       return o;
     }
