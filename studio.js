@@ -82,6 +82,16 @@
     for (let i = 3; i < a.length; i += 4) { let v = a[i]; for (let k = 0; k < P.length; k++) v -= P[k][i]; a[i] = v < 0 ? 0 : v; }
     x.putImageData(id, 0, 0); return c;
   }
+  /* the body that stays still: the cut-out minus the front and the cap, with no thin sliver left along the front.
+     A front marked a pixel or two inside the grinder's edge would leave that edge on the body, and it shows as a line
+     where the front was once it opens. Next to the front, anything thinner than about 4 px goes. */
+  function bodyOf(mask, front, cap) {
+    const b = minus(mask, [front, cap]); if (!front) return b;
+    const W = b.width, H = b.height, open = readRGBA(growMask(growMask(b, -2), 2), W, H), zone = readRGBA(growMask(front, 3.5), W, H);
+    const x = ctxR(b), id = x.getImageData(0, 0, W, H), a = id.data;
+    for (let i = 3; i < a.length; i += 4) if (zone[i] > 127 && open[i] < a[i]) a[i] = open[i];
+    x.putImageData(id, 0, 0); return b;
+  }
   function tint(mask, color) { const c = canvas(mask.width, mask.height), x = c.getContext('2d'); x.fillStyle = color; x.fillRect(0, 0, c.width, c.height); x.globalCompositeOperation = 'destination-in'; x.drawImage(mask, 0, 0); return c; }
   function masked(photo, mask) { const c = copyCanvas(photo); if (!mask) return c; const x = c.getContext('2d'); x.globalCompositeOperation = 'destination-in'; x.drawImage(mask, 0, 0, c.width, c.height); return c; }
   function ellipseMask(E, W, H) { const c = canvas(W, H), x = c.getContext('2d'); x.fillStyle = '#fff'; x.beginPath(); x.ellipse(E.cx, E.cy, Math.max(1, E.rx), Math.max(1, E.ry), E.a, 0, Math.PI * 2); x.fill(); return c; }
@@ -1112,7 +1122,7 @@
       const W = F.photo.width, H = F.photo.height, still = canvas(W, H), move = canvas(W, H), xs = still.getContext('2d'), xm = move.getContext('2d');
       const E = this.eff(F);
       const bk = this.hinge === 'none' ? 'shut' : 'opens', bodies = E.bodies || (E.bodies = {});
-      const body = bodies[bk] || (bodies[bk] = minus(E.mask, [this.hinge !== 'none' && E.front, E.cap]));
+      const body = bodies[bk] || (bodies[bk] = bodyOf(E.mask, this.hinge !== 'none' && E.front, E.cap));
       const front = E.front && this.hinge !== 'none' ? masked(F.photo, E.front) : null;
       xs.drawImage(masked(F.photo, body), 0, 0);
       const drawCap = (x) => { if (noCap) { if (sh && sh.cap) { const [ox, oy, ow, oh] = sh.cap.nonePos; x.drawImage(F.uncapped && F.uncappedMask ? this.uncappedPatch(F, sh.cap) : sh.cap.none, ox, oy, ow, oh); } } else { const cc = this.capCanvas(F, sh); if (cc) x.drawImage(cc.c, cc.cl, cc.ct); else if (E.cap) x.drawImage(masked(F.photo, E.cap), 0, 0); } };
@@ -1559,7 +1569,7 @@
           const FE = this.withEff(F), sh = { knob: F.knobEll ? knobShade(cv, F, { contrast: this.contrast, side: this.side }) : null, cap: F.layers.cap ? capShade(cv, FE) : null };
           const files = {}, add = (part, c, type = 'png') => { files[part] = null; jobs.push({ F, part, c, type, name: `${key}-${F.slug}-${part.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())}-${ver}.${type}` }); };
           const front = FE.layers.front && this.hinge !== 'none' ? FE.layers.front : null;
-          const body = minus(FE.layers.mask, [front, sh.cap && sh.cap.region]);
+          const body = bodyOf(FE.layers.mask, front, sh.cap && sh.cap.region);
           add('photo', crop(F.photo, 'jpg'), 'jpg'); add('mask', crop(FE.layers.mask)); add('body', crop(body)); if (front) add('front', crop(front));
           if (F.recolor && F.layers.paint) add('paint', crop(F.layers.paint));   // kept so the next color can use the same painted parts
           const G = {};
@@ -1960,6 +1970,6 @@
     openTexture: (host, opts) => new TexEditor(host, opts),
     openCutout: (host, opts) => new CutoutEditor(host, opts),
     loadCV,
-    _internals: { autoCut, autoCutBest, snapStroke, renderRings, vectorize, knobShade, capShade, texSquare, drawMesh, hingeFrom, poseAt, chamberAt }
+    _internals: { autoCut, autoCutBest, snapStroke, growMask, renderRings, vectorize, knobShade, capShade, texSquare, drawMesh, hingeFrom, poseAt, chamberAt }
   };
 })();
