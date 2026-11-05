@@ -142,6 +142,21 @@
     throw new Error(`${filename} is still processing. Try again in a minute.`);
   }
 
+  /* Keyboard for a dialog: Escape closes it, Tab stays inside it, and closing gives focus back to what opened it.
+     Returns the function that undoes this when the dialog closes. */
+  function dialogKeys(ov, close) {
+    const opener = document.activeElement, m = $('.modal', ov);
+    const key = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+      if (e.key !== 'Tab') return;
+      const f = $$('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea, a[href]', m).filter((x) => x.getClientRects().length && !x.closest('[hidden]'));
+      if (!f.length) return;
+      const first = f[0], last = f[f.length - 1], at = document.activeElement;
+      if (e.shiftKey && (at === first || !m.contains(at))) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && (at === last || !m.contains(at))) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('keydown', key); if (opener && opener.isConnected && opener.focus) opener.focus({ preventScroll: true }); };
+  }
   /* Pick an image already in Shopify Files (Content > Files). Resolves to its CDN url, or null. */
   function pickFile({ title = 'Choose from Shopify Files' } = {}) {
     return new Promise((resolve) => {
@@ -152,9 +167,8 @@
       document.body.appendChild(ov);
       const grid = $('[data-g]', ov), more = $('[data-more]', ov), ok = $('[data-ok]', ov), qIn = $('[data-q]', ov);
       let sel = null, after = null, term = '', t = null, seq = 0;
-      const done = (v) => { ov.remove(); document.removeEventListener('keydown', key); resolve(v); };
-      const key = (e) => { if (e.key === 'Escape') done(null); };
-      document.addEventListener('keydown', key);
+      const release = dialogKeys(ov, () => done(null)), done = (v) => { ov.remove(); release(); resolve(v); };
+      qIn.focus();
       $$('[data-x]', ov).forEach((b) => { b.onclick = () => done(null); });
       ov.onclick = (e) => { if (e.target === ov) done(null); };
       ok.onclick = () => sel && done(sel.url);
@@ -733,10 +747,11 @@
       ov.innerHTML = `<div class="modal sm" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="mh"><b>${esc(title)}</b><button class="ic" data-x aria-label="Close">&times;</button></div>
         <div class="mb"><div class="choices">${items.map(([k, t, d]) => `<button class="choice" data-k="${esc(k)}"><b>${esc(t)}</b>${d ? `<span>${esc(d)}</span>` : ''}</button>`).join('')}</div></div></div>`;
       document.body.appendChild(ov);
-      const done = (v) => { ov.remove(); resolve(v); };
+      const release = dialogKeys(ov, () => done(null)), done = (v) => { ov.remove(); release(); resolve(v); };
       $$('[data-x]', ov).forEach((b) => { b.onclick = () => done(null); });
       ov.onclick = (e) => { if (e.target === ov) done(null); };
       $$('[data-k]', ov).forEach((b) => { b.onclick = () => done(b.dataset.k); });
+      const first = $('[data-k]', ov); if (first) first.focus();
     });
   }
   async function saveTemplate(title, set) {
