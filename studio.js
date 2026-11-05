@@ -47,6 +47,8 @@
       i.src = url;
     });
   }
+  // Space pans the photo, except on a button, link or other control, where it presses the control as usual
+  const onControl = (e) => !!(e.target && e.target.closest && e.target.closest('button, a[href], summary, [role="button"], [contenteditable="true"]'));
   const toBlob = (c, type = 'image/png', q) => new Promise((res) => c.toBlob(res, type, q));
   const pickFile = () => new Promise((res) => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = () => res(i.files[0] || null); i.click(); });
   function imageCanvas(img, W, H) {
@@ -1519,7 +1521,7 @@
     bindKeys() {
       this._kd = (e) => {
         if (!this.root.isConnected || /INPUT|SELECT|TEXTAREA/.test((e.target || {}).tagName)) return;
-        if (e.code === 'Space') { this.keys.space = true; this.q('view').classList.add('pan'); e.preventDefault(); }
+        if (e.code === 'Space' && !onControl(e)) { this.keys.space = true; this.q('view').classList.add('pan'); e.preventDefault(); }
         const key = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
         if (mod && (key === 'z' || key === 'y')) { e.preventDefault(); if (key === 'y' || e.shiftKey) this.redo(); else this.undo(); return; }
         // B and E pick Add and Remove where the step has them; [ and ] size the brush
@@ -1944,7 +1946,7 @@
     bindKeys() {
       this._kd = (e) => {
         if (!this.root.isConnected || /INPUT|SELECT|TEXTAREA/.test((e.target || {}).tagName)) return;
-        if (e.code === 'Space') { this.keys.space = true; e.preventDefault(); }
+        if (e.code === 'Space' && !onControl(e)) { this.keys.space = true; e.preventDefault(); }
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); this.undo(); }
         if ((e.key === 'Delete' || e.key === 'Backspace') && this.sel && this.tool === 'points' && this.vec) { e.preventDefault(); this.pushUndo(); this.vec = JSON.parse(JSON.stringify(this.vec)); const r = this.vec.rings[this.sel[0]]; if (r.pts.length > 3) r.pts.splice(this.sel[1], 1); this.sel = null; this.fromVec(); }
       };
