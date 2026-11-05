@@ -197,3 +197,5 @@ html.zbg-lock{overflow:hidden}
   .zbg-opt:hover,.zbg-tog:hover,.zbg-gcard:hover,.zbg-btn:active{transform:none}
   .zbg-rows.ranked .zbg-bz[data-rank="1"] img{transform:none}
 }
+/* the dialog takes focus when it opens; the ring shows on its controls, not around the whole dialog */
+.zbg-ov .zbg-modal:focus{outline:none}

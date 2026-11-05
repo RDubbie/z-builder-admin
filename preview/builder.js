@@ -954,7 +954,7 @@
       } catch (e) { this.chip('The burr guide could not load. Please try again.'); return; } finally { if (help) help.disabled = false; }
       const g = C.grinderCfg, S = this.S;
       const guide = new window.ZernoBurrGuide(null, {
-        mode: 'modal', fixed: g.key, catalog: C.cat, assetBase: C.assetBase, heading: 'Burr guide', money: this.money,
+        mode: 'modal', opener: help, fixed: g.key, catalog: C.cat, assetBase: C.assetBase, heading: 'Burr guide', money: this.money,
         shop: { [g.size]: this.burrs.map((b) => ({ id: b.id, title: b.raw || b.title, price: b.price, available: b.available, img: this.burrImg(b.id) || b.srcs[0] })) },
         onPick: async (ids) => {
           await new Promise((r) => setTimeout(r, 280));

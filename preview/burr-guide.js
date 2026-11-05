@@ -82,15 +82,27 @@
     openModal() {
       this.ov = document.createElement('div');
       this.ov.className = 'zbg-ov';
-      this.ov.innerHTML = '<div class="zbg zbg-modal" role="dialog" aria-modal="true" aria-label="Burr guide"><button type="button" class="zbg-x" aria-label="Close">&times;</button><div class="zbg-in"></div></div>';
+      this.ov.innerHTML = '<div class="zbg zbg-modal" role="dialog" aria-modal="true" aria-label="Burr guide" tabindex="-1"><button type="button" class="zbg-x" aria-label="Close">&times;</button><div class="zbg-in"></div></div>';
       document.body.appendChild(this.ov);
       this.root = this.ov.querySelector('.zbg-in');
       this.ov.querySelector('.zbg-x').onclick = () => this.close();
       this.ov.addEventListener('click', (e) => { if (e.target === this.ov) this.close(); });
-      this.onKey = (e) => { if (e.key === 'Escape') this.close(); };
+      // keyboard: Escape closes, and Tab stays inside the dialog while it is open
+      this.opener = this.o.opener || document.activeElement;   // the builder passes its Help me choose button
+      const modal = this.ov.querySelector('.zbg-modal');
+      this.onKey = (e) => {
+        if (e.key === 'Escape') { this.close(); return; }
+        if (e.key !== 'Tab') return;
+        const f = [...modal.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter((el) => el.getClientRects().length && !el.closest('[hidden]'));
+        if (!f.length) return;
+        const first = f[0], last = f[f.length - 1], at = document.activeElement;
+        if (e.shiftKey && (at === first || !modal.contains(at))) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && (at === last || !modal.contains(at))) { e.preventDefault(); first.focus(); }
+      };
       document.addEventListener('keydown', this.onKey);
       document.documentElement.classList.add('zbg-lock');
       this.mount();
+      modal.focus({ preventScroll: true });
       requestAnimationFrame(() => this.ov.classList.add('on'));
     }
     close() {
@@ -98,7 +110,9 @@
       document.removeEventListener('keydown', this.onKey);
       document.documentElement.classList.remove('zbg-lock');
       this.ov.classList.remove('on');
-      setTimeout(() => this.ov.remove(), 250);
+      const ov = this.ov; setTimeout(() => ov.remove(), 250);
+      // focus goes back to the button that opened the guide
+      if (this.opener && this.opener.isConnected && typeof this.opener.focus === 'function') this.opener.focus({ preventScroll: true });
       if (this.o.onClose) this.o.onClose();
     }
     mount() {
