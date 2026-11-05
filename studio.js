@@ -1261,7 +1261,7 @@
           x.globalAlpha = 0.38; x.drawImage(C.t.front, 0, 0); x.globalAlpha = 1;
           if (this.hinge !== 'none' && this.fsub === 'open') { x.save(); x.globalAlpha = 0.3; this.applyPose(x, this.openPose(F), F); x.drawImage(C.t.front, 0, 0); x.restore(); }   // where it ends up when open
         }
-        if (k === 'knob') { const kc = this.knobCanvas(F, this.shading(F)); if (kc) x.drawImage(kc.c, kc.x0, kc.y0); if (C.t.knob) { x.globalAlpha = 0.35; x.drawImage(C.t.knob, 0, 0); x.globalAlpha = 1; } }
+        if (k === 'knob') { const kc = this.knobCanvas(F, this.shading(F)); if (kc) x.drawImage(kc.c, kc.x0, kc.y0); if (C.t.knob) { x.globalAlpha = ['paint', 'erase'].includes(this.tool) ? 0.45 : kc ? 0.12 : 0.35; x.drawImage(C.t.knob, 0, 0); x.globalAlpha = 1; } }   // light over the wood, strong while painting the edge
         if (k === 'cap') { const cc = this.capCanvas(F, this.shading(F)); if (cc) x.drawImage(cc.c, cc.cl, cc.ct); if (C.t.cap) { x.globalAlpha = cc ? 0.18 : 0.45; x.drawImage(C.t.cap, 0, 0); x.globalAlpha = 1; } }
         if (k === 'face' && C.t.front && this.hinge !== 'none') { x.globalAlpha = 0.18; x.drawImage(C.t.front, 0, 0); x.globalAlpha = 1; }
         if (lk && C.hint[lk]) { x.globalAlpha = 0.5; x.drawImage(C.hint[lk], 0, 0); x.globalAlpha = 1; }
