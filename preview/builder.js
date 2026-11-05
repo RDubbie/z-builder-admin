@@ -36,6 +36,18 @@
   const slug = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/[\s_]+/g, '-').replace(/-+/g, '-');
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  /* keyframes for a piece that flies into a slot: one curved path, eased in and out, a little lift at the top, and a
+     spin that slows to a stop on a whole turn, so it lands upright and still. Sampled, so the motion has no corners. */
+  function arcFrames(dx, dy, s0, turns, n = 36) {
+    const travel = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2), settle = (t) => 1 - Math.pow(1 - t, 3);
+    const cx = dx * 0.45, cy = dy * 0.45 - Math.min(60, Math.hypot(dx, dy) * 0.2 + 20), out = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, u = travel(t), q = 1 - u, x = q * q * dx + 2 * q * u * cx, y = q * q * dy + 2 * q * u * cy;
+      const s = (s0 + (1 - s0) * u) * (1 + 0.06 * Math.sin(Math.PI * t)), d = 18 * (1 - u);
+      out.push({ offset: t, transform: `translate(${x.toFixed(2)}px,${y.toFixed(2)}px) scale(${s.toFixed(4)}) rotate(${(turns * settle(t)).toFixed(2)}deg)`, filter: `drop-shadow(0 ${d.toFixed(1)}px ${d.toFixed(1)}px rgba(0,0,0,${(0.55 * (1 - u)).toFixed(3)}))` });
+    }
+    return out;
+  }
   const imgCache = new Map();
   function loadImg(url) {
     if (!url) return Promise.reject(new Error('no url'));
@@ -723,6 +735,11 @@
         // drawn at the size it lands at and shrunk to where it starts, so it is never enlarged (enlarging blurs it)
         const f = this.flyEl(spec, tr);
         const dx = (fr.left + fr.width / 2) - (tr.left + tr.width / 2), dy = (fr.top + fr.height / 2) - (tr.top + tr.height / 2), s0 = fr.height / tr.height;
+        if (end >= 1) {   // it lands in a slot: one smooth arc, and the spin slows to a stop upright, so nothing snaps at the end
+          const a = f.animate(arcFrames(dx, dy, s0, Math.max(1, Math.round(spin / 360)) * 360), { duration: dur, fill: 'forwards' });
+          a.onfinish = () => { f.remove(); res(); };
+          return;
+        }
         const a = f.animate([
           { transform: `translate(${dx}px,${dy}px) scale(${s0}) rotate(0deg)`, opacity: 1, filter: 'drop-shadow(0 18px 18px rgba(0,0,0,.6))' },
           { transform: `translate(${dx * 0.45}px,${dy * 0.45 - 40}px) scale(${(1 + s0) / 2 * 1.08}) rotate(${spin * 0.6}deg)`, opacity: 1, offset: 0.5 },
@@ -750,6 +767,29 @@
       // start: the face (not the padded canvas) the size of the swatch
       const dx = (fr.left + fr.width / 2) - (k.left + k.width / 2), dy = (fr.top + fr.height / 2) - (k.top + k.height / 2), s0 = fr.width / k.width;
       f.style.transformOrigin = `${((k.left + k.width / 2 - tr.left) / tr.width) * 100}% ${((k.top + k.height / 2 - tr.top) / tr.height) * 100}%`;
+      await f.animate([
+        { transform: `translate(${dx}px,${dy}px) scale(${s0})`, filter: 'drop-shadow(0 18px 18px rgba(0,0,0,.55))' },
+        { transform: `translate(${dx * 0.4}px,${dy * 0.4 - 36}px) scale(${(1 + s0) / 2 * 1.06})`, offset: 0.55 },
+        { transform: 'translate(0px,0px) scale(1)', filter: 'drop-shadow(0 0 0 rgba(0,0,0,0))' }
+      ], { duration: 800, easing: 'cubic-bezier(.6,.05,.3,1)', fill: 'forwards' }).finished.catch(() => {});
+      land(); requestAnimationFrame(() => f.remove());
+    }
+    /* the chosen funnel cap, the same way as the accent piece: drawn first exactly as it will sit on the funnel, then that
+       picture flies from the swatch onto its place at the same pace, and lands where the real cap appears */
+    async flyCap(c, fr) {
+      const a = this.art(), g = a && a.geom;
+      if (!c || !g || !g.capPos || !g.cap || !a.urls.capD) return;
+      const A = this.q('capA'), B = this.q('capB'), front = A.style.opacity === '0' ? B : A, back = front === A ? B : A, key = [a.slug, c.id].join(':');
+      if (front.dataset.key === key && front.style.opacity !== '0') return;
+      back.style.transition = 'none'; back.style.opacity = '0'; this.pos(back, g.capPos); back.dataset.key = key;
+      try { await this.drawCap(back, a, c); } catch (e) { console.warn('[Zerno builder]', e); return; }
+      if (back.dataset.key !== key) return;
+      const land = () => { back.style.opacity = '1'; front.style.transition = 'none'; front.style.opacity = '0'; this.q('capNone').style.opacity = '0';
+        requestAnimationFrame(() => { back.style.transition = ''; front.style.transition = ''; }); };
+      if (this.reduce || !fr) { land(); return; }
+      const tr = back.getBoundingClientRect(), f = this.flyEl({ canvas: back }, tr);
+      const dx = (fr.left + fr.width / 2) - (tr.left + tr.width / 2), dy = (fr.top + fr.height / 2) - (tr.top + tr.height / 2), s0 = fr.width / tr.width;
+      f.style.borderRadius = '0';
       await f.animate([
         { transform: `translate(${dx}px,${dy}px) scale(${s0})`, filter: 'drop-shadow(0 18px 18px rgba(0,0,0,.55))' },
         { transform: `translate(${dx * 0.4}px,${dy * 0.4 - 36}px) scale(${(1 + s0) / 2 * 1.06})`, offset: 0.55 },
@@ -1008,15 +1048,14 @@
     }
     async chooseCap(id, disc) {
       const S = this.S; if (S.cap === id) return;
-      const hadExtras = id === 'none' && S.capSpare.length, dup = id !== 'none' && S.capSpare.includes(id);
+      // measure the tapped swatch before the swatches redraw: a redrawn swatch is a new element, and the old one
+      // measures 0,0, which made the cap fly in from the top left corner of the screen
+      const hadExtras = id === 'none' && S.capSpare.length, dup = id !== 'none' && S.capSpare.includes(id), fr = disc.getBoundingClientRect();
       S.cap = id; S.capSpare = id === 'none' ? [] : S.capSpare.filter((z) => z !== id); this.save();
       this.renderSwatches(); this.update(false);
       if (id !== 'none') {
-        const c = this.cap(id), capEl = [this.q('capA'), this.q('capB'), this.q('capNone')].find((e) => e.style.opacity !== '0');
-        if (capEl && this.art()) {
-          const r = capEl.getBoundingClientRect();
-          await this.fly({ tex: c.hi || c.image, crop: this.C.settings.capCrop }, disc.getBoundingClientRect(), { left: r.left + r.width * 0.1, top: r.top - r.width * 0.4, width: r.width * 0.8, height: r.width * 0.8 }, { end: 0.3, dur: 750 });
-        }
+        const c = this.cap(id);
+        await this.flyCap(c, fr);
         this.renderRig(); this.chip(`<b>${esc(c.title)}</b> funnel cap${dup ? ' moved from extras to the grinder' : ''}`);
       } else { this.renderRig(); this.chip(hadExtras ? 'Funnel cap and extra caps removed' : 'Funnel cap removed'); }
     }
@@ -1066,7 +1105,7 @@
       const idx = this.spareItems().findIndex(([k, v]) => k === kind && v === id), slot = this.q('tray2Slots').children[idx];
       if (slot) {
         slot.style.opacity = '0';
-        await this.fly({ tex: x.hi || x.image, crop: kind === 'acc' ? this.C.settings.accentCrop : this.C.settings.capCrop }, fr, slot.getBoundingClientRect(), { spin: 180, end: 1, dur: 800 });
+        await this.fly({ tex: x.hi || x.image, crop: kind === 'acc' ? this.C.settings.accentCrop : this.C.settings.capCrop }, fr, slot.getBoundingClientRect(), { spin: 360, end: 1, dur: 950 });
         slot.style.opacity = '1';
       }
       this.chip(`Extra <b>${esc(x.title)}</b> ${noun} added · ${this.money(x.price)}`);
