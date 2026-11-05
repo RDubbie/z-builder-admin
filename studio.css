@@ -133,6 +133,8 @@
 .zs-more[open]{padding-bottom:10px}
 .zs-more[open]>*:not(summary){margin-top:10px}
 .zs-sub2 button{font-size:12px;padding:7px 4px}
+.zs-shape{grid-auto-columns:auto}
+.zs-shape button{padding:6px 9px;white-space:nowrap}
 .zs-sub2 button[disabled]{opacity:.45;cursor:default}
 
 /* tablet and touch: one-line step bar (numbers, the current step named), Undo and Redo together, 44 px targets */
